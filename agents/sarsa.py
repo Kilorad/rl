@@ -15,8 +15,8 @@ sys.path.append('./common/')
 import utils
 
 
-# Startegy Imitation Agent
-class ImitAgent:
+# double SARSA agent (sr+sar)
+class SarsaAgent:
     def __init__(self, state_size, action_size):
         self.render = False
         self.load_model = False
@@ -41,20 +41,14 @@ class ImitAgent:
         # create main model and target model
         self.model_sr = self.build_model('sr')
         self.model_sar = self.build_model('sar')
-        self.model_sra = self.build_model('sra')
 
         # initialize target model
         self.train_model(epochs=1)
-        if self.load_model:
-            self.model.load_weights("./save_model/cartpole_ddqn.h5")
 
     # approximate Q function using Neural Network
     # state is input and Q Value of each action is output of network
     def build_model(self,type):
-        if type=='sra':
-            input_dim = self.state_size + 1
-            out_dim = self.action_size 
-        elif type=='sar':
+        if type=='sar':
             input_dim = self.state_size + self.action_size 
             out_dim = 1
         elif type=='sr':
@@ -69,20 +63,11 @@ class ImitAgent:
                         kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.01)))
         model.add(BatchNormalization())
         model.add(Dropout(rate=0.3))
-        if type!='sra':
-            model.add(Dense(out_dim, activation='linear',
-                            kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.01)))
-        else:
-            model.add(keras.layers.Dense(out_dim, activation='softmax',
-                            kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.01)))
-
+        model.add(Dense(out_dim, activation='linear',
+                        kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.01)))
         model.summary()
-        if type!='sra':
-            model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
-        else:
-            model.compile(optimizer=Adam(lr=self.learning_rate),
-                      loss='categorical_crossentropy',
-                      metrics=['accuracy'])
+        model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
+
         return model
 
 
@@ -91,25 +76,9 @@ class ImitAgent:
         if np.random.rand() <= self.epsilon or len(self.memory)<self.train_start:
             return random.randrange(self.action_size)
         else:
-            #Предсказать возможное R
-            #Затем чуть завысить R и выдать A (сделать так для 2-3 разных R), записать в массив
-            #Затем предсказать R сарсой
-            r_predict = self.model_sr.predict(state)
-            r_predict_abs = abs(r_predict)
-            r_addition_array = [r_predict_abs*(-0.1),r_predict_abs*0.1,r_predict_abs*0.25,r_predict_abs*0.5,r_predict_abs*1,np.percentile(self.r_disco,90)-r_predict]
-            if extended:
-                r_addition_array.extend([r_predict_abs*2,r_predict_abs*0.01,np.percentile(self.r_disco,50)-r_predict,np.percentile(self.r_disco,60)-r_predict,np.percentile(self.r_disco,20)-r_predict,np.percentile(self.r_disco,95)-r_predict])
-            a_array = []
-            for r_addition in r_addition_array:
-                #sra-модель работает с дельта r
-                sr_current=np.hstack((state,r_addition))
-                raw=self.model_sra.predict(sr_current)
-                a_predict = np.argmax(raw)
-                a_array.append(a_predict)
-            a_array = np.unique(np.array(a_array))
-            #предсказать R через sarsa
+            #Перебрать все A, для них предсказать дельта R
             r_predict_array = []
-            for a in a_array:
+            for a in range(self.action_size):
                 a_one_hot = np.zeros(self.action_size)
                 a_one_hot[a]=1
                 sa_current=np.concatenate((state[0,:],a_one_hot))
@@ -117,8 +86,8 @@ class ImitAgent:
                 #sar-модель работает с дельта r
                 r_predict_array.append(self.model_sar.predict(sa_current)[0][0])
             if verbose:
-                print('a_array',a_array,'r_predict',r_predict,'r_predict_array',r_predict_array)
-            return a_array[np.argmax(r_predict_array)]
+                print('r_predict_array',r_predict_array)
+            return np.argmax(r_predict_array)
 
     # save sample <s,a,r,s'> to the replay memory
     def append_sample(self, state, action, reward, next_state, done):
@@ -179,7 +148,7 @@ class ImitAgent:
                 break
         return (s,action,reward)
     def update_target_model(self):
-        self.train_model(epochs=20,sub_batch_size=9000,verbose=0)
+        self.train_model(epochs=15,sub_batch_size=9000,verbose=0)
         self.train_model(epochs=1,sub_batch_size=9000,verbose=1)
     def train_model(self,epochs=1,sub_batch_size=None,verbose=0):
         if len(self.memory) < self.train_start:
@@ -206,8 +175,6 @@ class ImitAgent:
         a=a[mini_batch,:]
         r=r[mini_batch]
 
-        # make minibatch which includes target q value and predicted q value
-        # and do the model fit!
         if len(self.memory) < self.train_start*1.05:
             epochs*=10
         self.model_sr.fit(s, r, batch_size=self.batch_size,
@@ -217,12 +184,3 @@ class ImitAgent:
         delta_r = r-r_sr_predicted
         self.model_sar.fit(np.hstack((s,a)), delta_r, batch_size=self.batch_size,
                        epochs=epochs, verbose=verbose)
-        #А здесь сделать аугментацию!
-        #a = np.array(np.argmax(agent.a,axis=1),ndmin=2).T
-        delta_r+=r*0.05#если ситуация предсказуемо выигрышная, тоже хорошо бы повторить успех
-        idx_good_decisions = np.concatenate((np.where(delta_r>np.percentile(delta_r,75))[0],np.where(delta_r>np.percentile(delta_r,90))[0],np.where(delta_r>np.percentile(delta_r,96))[0]))
-        if verbose:
-            print('delta_r:min,max,mean,perc 60',np.min(delta_r),np.max(delta_r),np.mean(delta_r),np.percentile(delta_r,60) ,'idx_good_decisions_count',len(idx_good_decisions))
-        if len(idx_good_decisions)>0:
-            self.model_sra.fit(np.hstack((s,delta_r))[idx_good_decisions,:], a[idx_good_decisions,:], batch_size=self.batch_size,
-                           epochs=int(epochs*1.2), verbose=verbose)
