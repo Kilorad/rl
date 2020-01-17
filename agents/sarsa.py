@@ -148,7 +148,7 @@ class SarsaAgent:
                 break
         return (s,action,reward)
     def update_target_model(self):
-        self.train_model(epochs=15,sub_batch_size=9000,verbose=0)
+        self.train_model(epochs=40,sub_batch_size=9000,verbose=0)
         self.train_model(epochs=1,sub_batch_size=9000,verbose=1)
     def train_model(self,epochs=1,sub_batch_size=None,verbose=0):
         if len(self.memory) < self.train_start:
