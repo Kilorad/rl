@@ -33,7 +33,7 @@ class SarsaAgent:
         self.batch_size = 9000
         self.sub_batch_size=500
         self.train_start = 3000
-        self.reward_part_need = 0.6
+        self.reward_part_need = 0.1
         self.planning_horison = 210
         # create replay memory using deque
         self.memory = deque(maxlen=10000)
