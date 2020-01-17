@@ -21,7 +21,7 @@ def exp_smooth(data,alpha,steps):
     return(data_to_mod)
 # Goal-based Agent for the Cartpole
 class ImitAgent:
-    def __init__(self, state_size, action_size):
+     def __init__(self, state_size, action_size):
         self.render = False
         self.load_model = False
         # get size of state and action
@@ -32,13 +32,13 @@ class ImitAgent:
         self.discount_factor = 0.995
         self.learning_rate = 0.001
         self.epsilon = 1.0
-        self.epsilon_decay = 0.9998
+        self.epsilon_decay = 0.999
         self.epsilon_min = 0.01
         self.batch_size = 9000
-        self.sub_batch_size=800
+        self.sub_batch_size=500
         self.train_start = 3000
-        self.reward_part_need = 0.4
-        self.planning_horison = 270
+        self.reward_part_need = 0.6
+        self.planning_horison = 210
         # create replay memory using deque
         self.memory = deque(maxlen=10000)
 
@@ -73,10 +73,20 @@ class ImitAgent:
                         kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.01)))
         model.add(BatchNormalization())
         model.add(Dropout(rate=0.3))
-        model.add(Dense(out_dim, activation='linear',
-                        kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.01)))
+        if type!='sra':
+            model.add(Dense(out_dim, activation='linear',
+                            kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.01)))
+        else:
+            model.add(keras.layers.Dense(out_dim, activation='softmax',
+                            kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.01)))
+        
         model.summary()
-        model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
+        if type!='sra':
+            model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
+        else:
+            model.compile(optimizer=Adam(lr=self.learning_rate),
+                      loss='categorical_crossentropy',
+                      metrics=['accuracy'])
         return model
 
 
@@ -173,7 +183,7 @@ class ImitAgent:
                 break
         return (s,action,reward)
     def update_target_model(self):
-        self.train_model(epochs=100,sub_batch_size=9000,verbose=0)
+        self.train_model(epochs=20,sub_batch_size=9000,verbose=0)
         self.train_model(epochs=1,sub_batch_size=9000,verbose=1)
     def train_model(self,epochs=1,sub_batch_size=None,verbose=0):
         if len(self.memory) < self.train_start:
@@ -183,7 +193,7 @@ class ImitAgent:
         self.make_discounted_rewards()
         batch_size = max(self.batch_size,sub_batch_size)
         batch_size = min(batch_size, len(self.memory))
-        for i in range(7):
+        for i in range(6):
             mini_batch = np.random.randint(low=0,high=self.s.shape[0],size=len(self.memory))
             #я хочу, чтобы в батч попали награды, чтобы было, за что цепляться
             r = self.r_disco[mini_batch,:]
@@ -203,7 +213,7 @@ class ImitAgent:
         # make minibatch which includes target q value and predicted q value
         # and do the model fit!
         if len(self.memory) < self.train_start*1.05:
-            epochs*=4
+            epochs*=10
         self.model_sr.fit(s, r, batch_size=self.batch_size,
                        epochs=epochs, verbose=verbose)
         r_sr_predicted = self.model_sr.predict(s)
@@ -212,6 +222,11 @@ class ImitAgent:
         self.model_sar.fit(np.hstack((s,a)), delta_r, batch_size=self.batch_size,
                        epochs=epochs, verbose=verbose)
         #А здесь сделать аугментацию!
-        idx_good_decisions = np.concatenate((np.where(delta_r>np.percentile(delta_r,60))[0],np.where(delta_r>np.percentile(delta_r,90))[0],np.where(delta_r>np.percentile(delta_r,96))[0]))
-        self.model_sra.fit(np.hstack((s,delta_r))[idx_good_decisions,:], a[idx_good_decisions,:], batch_size=self.batch_size,
-                       epochs=int(epochs*1.2), verbose=verbose)
+        #a = np.array(np.argmax(agent.a,axis=1),ndmin=2).T
+        delta_r+=r*0.05#если ситуация предсказуемо выигрышная, тоже хорошо бы повторить успех
+        idx_good_decisions = np.concatenate((np.where(delta_r>np.percentile(delta_r,75))[0],np.where(delta_r>np.percentile(delta_r,90))[0],np.where(delta_r>np.percentile(delta_r,96))[0]))
+        if verbose:
+            print('delta_r:min,max,mean,perc 60',np.min(delta_r),np.max(delta_r),np.mean(delta_r),np.percentile(delta_r,60) ,'idx_good_decisions_count',len(idx_good_decisions))
+        if len(idx_good_decisions)>0:
+            self.model_sra.fit(np.hstack((s,delta_r))[idx_good_decisions,:], a[idx_good_decisions,:], batch_size=self.batch_size,
+                           epochs=int(epochs*1.2), verbose=verbose)
