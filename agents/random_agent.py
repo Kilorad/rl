@@ -19,7 +19,15 @@ class randomAgent:
     def __init__(self, state_size, action_size):
         self.render = False
         self.action_size = action_size
+        self.memory = []
+        self.epsilon = 1
 
     # get action from model using epsilon-greedy policy
     def get_action(self, state):
         return random.randrange(self.action_size)
+    def append_sample(self,a,b,c,d,e):
+        pass
+    def train_model(self):
+        pass
+    def update_target_model(self):
+        pass
