@@ -177,10 +177,16 @@ class SarsaConvolAgent:
         #print(s)
         #print(s.shape)
         print(s[0].shape,s[2].shape,s[20].shape)
-        s=np.concatenate(s[:3])
+        s=np.concatenate(s[:])
         print(s.shape)
         self.model_sr.fit(s, r, batch_size=self.batch_size,
                        epochs=epochs, verbose=verbose)
+        #проверка на неправильные s
+        for i in len(s):
+            print(i,s[i].shape)
+            if i>0 and s[i].shape!=s[i-1].shape:
+                print('________________________________________')
+        #
         r_sr_predicted = self.model_sr.predict(s)
         #Предсказать дельту
         delta_r = r-r_sr_predicted
