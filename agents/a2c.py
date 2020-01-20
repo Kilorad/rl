@@ -20,6 +20,8 @@ class A2CAgent:
         self.state_size = state_size
         self.action_size = action_size
         self.value_size = 1
+        self.epsilon = 0
+        self.memory = []
 
         # These are hyper parameters for the Policy Gradient
         self.discount_factor = 0.99
@@ -65,7 +67,13 @@ class A2CAgent:
         return np.random.choice(self.action_size, 1, p=policy)[0]
 
     # update policy network every episode
-    def train_model(self, state, action, reward, next_state, done):
+    def train_model(self):
+        state=self.state
+        action=self.action
+        reward=self.reward
+        next_state=self.next_state
+        done=self.done
+        
         target = np.zeros((1, self.value_size))
         advantages = np.zeros((1, self.action_size))
 
@@ -81,4 +89,11 @@ class A2CAgent:
 
         self.actor.fit(state, advantages, epochs=1, verbose=0)
         self.critic.fit(state, target, epochs=1, verbose=0)
-
+    def append_sample(self,state, action, reward, next_state, done):
+        self.state=state
+        self.action=action
+        self.reward=reward
+        self.next_state=next_state
+        self.done=done
+    def update_target_model(self):
+        pass
