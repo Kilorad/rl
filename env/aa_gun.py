@@ -62,7 +62,8 @@ class projectile(object):
         self.vx=start_speed*np.cos(angle*np.pi/180)
         self.t=32
         self.env=env
-        
+        if env.long_projectiles:
+            self.t*=2.5
     def act(self):
         #global reward
         #global hit
@@ -169,7 +170,7 @@ class AA_gun_simple0_env(gym.Env):
         'video.frames_per_second' : 90
     }
 
-    def __init__(self):
+    def __init__(self,fast_planes=False,long_projectiles=False,random_speed=False):
         high = np.array([
             250,
             500,
@@ -184,6 +185,10 @@ class AA_gun_simple0_env(gym.Env):
             1,
             2
         ])
+        self.fast_planes=fast_planes
+        self.random_speed=random_speed
+        self.long_projectiles=long_projectiles
+        
         self.action_space = spaces.Discrete(7)
         self.observation_space = spaces.Box(-high, high, dtype=np.float32)
 
@@ -204,10 +209,24 @@ class AA_gun_simple0_env(gym.Env):
         self.x_start = -170-np.random.rand()*100
         self.y_start = 5+np.random.rand()*130
         self.vx_start = 2
+        if self.fast_planes:
+            self.vx_start*=3.5
         self.x_maneur = self.x_start+np.random.rand()*220
         self.vy = 1.5
+        if self.fast_planes:
+            self.vy*=2
         self.dx_maneur = np.random.rand()*140
-        self.plane = planeClass(self.x_start,self.y_start,self.vx_start,self.x_maneur,self.vy,self.dx_maneur)
+        
+        self.random_speed=random_speed
+        self.long_projectiles=long_projectiles
+        
+        if self.random_speed:
+            mvx=1+(np.random.rand()-0.5)*0.4
+            mvy=(np.random.rand()-0.5)*2.5
+        else:
+            mvx = 1
+            mvy=(np.random.rand()-0.5)*2.5
+        self.plane = planeClass(self.x_start,self.y_start,self.vx_start*mvx,self.x_maneur,self.vy*mvy,self.dx_maneur)
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
@@ -254,7 +273,13 @@ class AA_gun_simple0_env(gym.Env):
             self.y_start = 5+np.random.rand()*330
             self.x_maneur = self.x_start+np.random.rand()*220
             self.dx_maneur = np.random.rand()*140
-            self.plane = planeClass(self.x_start,self.y_start,self.vx_start,self.x_maneur,self.vy,self.dx_maneur)
+            if self.random_speed:
+                mvx=1+(np.random.rand()-0.5)*0.4
+                mvy=(np.random.rand()-0.5)*2.5
+            else:
+                mvx = 1
+                mvy=(np.random.rand()-0.5)*2.5
+            self.plane = planeClass(self.x_start,self.y_start,self.vx_start*mvx,self.x_maneur,self.vy*mvy,self.dx_maneur)
             #print('hit',hit)
         #фичи
         plane_dir = np.arctan2(self.plane.y,self.plane.x)*180/np.pi
@@ -336,7 +361,13 @@ class AA_gun_simple0_env(gym.Env):
         self.y_start = 5+np.random.rand()*200
         self.x_maneur = self.x_start+np.random.rand()*220
         self.dx_maneur = np.random.rand()*140
-        self.plane = planeClass(self.x_start,self.y_start,self.vx_start,self.x_maneur,self.vy,self.dx_maneur)
+        if self.random_speed:
+            mvx=1+(np.random.rand()-0.5)*0.4
+            mvy=(np.random.rand()-0.5)*2.5
+        else:
+            mvx = 1
+            mvy=(np.random.rand()-0.5)*2.5
+        self.plane = planeClass(self.x_start,self.y_start,self.vx_start*mvx,self.x_maneur,self.vy*mvy,self.dx_maneur)
         
         self.close()
         
