@@ -33,7 +33,7 @@ class SarsaAgent:
         self.batch_size = 9000
         self.sub_batch_size=500
         self.train_start = 3000
-        self.reward_part_need = 0.1
+        self.reward_part_need = 0.3
         self.planning_horison = 210
         # create replay memory using deque
         self.memory = deque(maxlen=10000)
@@ -55,16 +55,16 @@ class SarsaAgent:
             input_dim = self.state_size
             out_dim = 1
         model = Sequential()
-        model.add(Dense(160, input_dim=input_dim, activation='relu',
-                        kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.01)))
+        model.add(Dense(100, input_dim=input_dim, activation='relu',
+                        kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.001)))
         model.add(BatchNormalization())
-        model.add(Dropout(rate=0.3))
-        model.add(Dense(160, activation='relu',
-                        kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.01)))
+        model.add(Dropout(rate=0.5))
+        model.add(Dense(100, activation='relu',
+                        kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.001)))
         model.add(BatchNormalization())
-        model.add(Dropout(rate=0.3))
+        model.add(Dropout(rate=0.5))
         model.add(Dense(out_dim, activation='linear',
-                        kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.01)))
+                        kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.001)))
         model.summary()
         model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
 
@@ -108,6 +108,7 @@ class SarsaAgent:
     # pick samples randomly from replay memory (with batch_size)
     def rebalance_data(self,s,action,reward):
         mean = np.mean(reward)
+        #размножь большие
         idx_big = reward>mean
         if any(idx_big):
             idx_big_num = np.where(idx_big)[0]
@@ -116,6 +117,24 @@ class SarsaAgent:
             reward_add = list(reward[idx_big_num])
 
             initial_part = np.mean(idx_big)
+            multiplication_coef = int(self.reward_part_need/initial_part) - 1
+
+            #action.extend([action_add]*multiplication_coef)
+            #reward.extend([reward_add]*multiplication_coef)
+            for i in range(multiplication_coef):
+                s=np.vstack((s,s_add))
+                action = np.concatenate((action,action_add))
+                reward = np.concatenate((reward,reward_add))
+            #print('initial_part',initial_part,'mean',mean,'multiplication_coef',multiplication_coef)
+        #размножь мелкие
+        idx_small = reward<mean
+        if any(idx_small):
+            idx_small_num = np.where(idx_small)[0]
+            s_add = list(s[idx_small_num])
+            action_add = list(action[idx_small_num])
+            reward_add = list(reward[idx_small_num])
+
+            initial_part = np.mean(idx_small)
             multiplication_coef = int(self.reward_part_need/initial_part) - 1
 
             #action.extend([action_add]*multiplication_coef)
