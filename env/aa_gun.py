@@ -63,7 +63,7 @@ class projectile(object):
         self.t=32
         self.env=env
         if env.long_projectiles:
-            self.t*=2.5
+            self.t*=170
     def act(self):
         #global reward
         #global hit
@@ -167,7 +167,7 @@ class AA_gun_simple0_env(gym.Env):
     
     metadata = {
         'render.modes': ['human', 'rgb_array'],
-        'video.frames_per_second' : 90
+        'video.frames_per_second' : 110
     }
 
     def __init__(self,fast_planes=False,long_projectiles=False,random_speed=False):

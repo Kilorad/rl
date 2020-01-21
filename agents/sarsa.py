@@ -195,6 +195,7 @@ class SarsaAgent:
         r=r[mini_batch]
 
         if len(self.memory) < self.train_start*1.05:
+            verbose = True
             epochs*=10
         self.model_sr.fit(s, r, batch_size=self.batch_size,
                        epochs=epochs, verbose=verbose)
@@ -203,3 +204,5 @@ class SarsaAgent:
         delta_r = r-r_sr_predicted
         self.model_sar.fit(np.hstack((s,a)), delta_r, batch_size=self.batch_size,
                        epochs=epochs, verbose=verbose)
+        if verbose:
+            print('delta_r',np.std(delta_r),'r',np.std(r))
