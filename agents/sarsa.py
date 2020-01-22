@@ -34,7 +34,7 @@ class SarsaAgent:
         self.sub_batch_size=500
         self.train_start = 3000
         self.reward_part_need = 0.3
-        self.planning_horison = 210
+        self.planning_horison = 510
         # create replay memory using deque
         self.memory = deque(maxlen=10000)
 
@@ -93,7 +93,7 @@ class SarsaAgent:
     def append_sample(self, state, action, reward, next_state, done):
         a_one_hot = np.zeros(self.action_size)
         a_one_hot[action]=1
-        sar_curr = np.concatenate((state[0,:],a_one_hot,[reward]))
+        sar_curr = np.concatenate((state[0,:],a_one_hot,[reward],[done]))
         self.memory.append(sar_curr)
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
@@ -103,7 +103,8 @@ class SarsaAgent:
         self.s = arr_mem[:,:self.state_size]
         self.a = arr_mem[:,self.state_size:self.state_size+self.action_size]
         self.r = arr_mem[:,self.state_size+self.action_size:self.state_size+self.action_size+1]
-        self.r_disco = utils.exp_smooth(self.r,self.discount_factor,self.planning_horison)
+        self.d = arr_mem[:,self.state_size+self.action_size+1:self.state_size+self.action_size+2]
+        self.r_disco = utils.exp_smooth(self.r,self.discount_factor,self.planning_horison,self.d)
 
     # pick samples randomly from replay memory (with batch_size)
     def rebalance_data(self,s,action,reward):
