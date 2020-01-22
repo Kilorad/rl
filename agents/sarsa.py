@@ -30,9 +30,9 @@ class SarsaAgent:
         self.epsilon = 1.0
         self.epsilon_decay = 0.999
         self.epsilon_min = 0.01
-        self.batch_size = 9000
+        self.batch_size = 3000
         self.sub_batch_size=500
-        self.train_start = 3000
+        self.train_start = 2000
         self.reward_part_need = 0.3
         self.planning_horison = 510
         # create replay memory using deque
@@ -168,8 +168,8 @@ class SarsaAgent:
                 break
         return (s,action,reward)
     def update_target_model(self):
-        self.train_model(epochs=40,sub_batch_size=9000,verbose=0)
-        self.train_model(epochs=1,sub_batch_size=9000,verbose=1)
+        self.train_model(epochs=27,sub_batch_size=6000,verbose=0)
+        self.train_model(epochs=1,sub_batch_size=6000,verbose=1)
     def train_model(self,epochs=1,sub_batch_size=None,verbose=0):
         if len(self.memory) < self.train_start:
             return
@@ -197,7 +197,7 @@ class SarsaAgent:
 
         if len(self.memory) < self.train_start*1.05:
             verbose = True
-            epochs*=10
+            epochs*=20
         self.model_sr.fit(s, r, batch_size=self.batch_size,
                        epochs=epochs, verbose=verbose)
         r_sr_predicted = self.model_sr.predict(s)
