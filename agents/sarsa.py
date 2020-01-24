@@ -34,7 +34,7 @@ class SarsaAgent:
         self.sub_batch_size=500
         self.train_start = 2000
         self.reward_part_need = 0.3
-        self.planning_horison = 510
+        self.planning_horison = 810
         # create replay memory using deque
         self.memory = deque(maxlen=10000)
 
@@ -168,8 +168,11 @@ class SarsaAgent:
                 break
         return (s,action,reward)
     def update_target_model(self):
-        self.train_model(epochs=27,sub_batch_size=6000,verbose=0)
+        self.train_model(epochs=30,sub_batch_size=6000,verbose=0)
         self.train_model(epochs=1,sub_batch_size=6000,verbose=1)
+    def test_model(self,model,X,Y):
+        mse = np.mean((model.predict(X)-Y)**2)
+        return mse
     def train_model(self,epochs=1,sub_batch_size=None,verbose=0):
         if len(self.memory) < self.train_start:
             return
@@ -188,6 +191,8 @@ class SarsaAgent:
         a = self.a[mini_batch,:]
         #    
         (s,a,r) = self.rebalance_data(s,a,r)
+        if np.std(r)==0:
+            return
         #
         batch_size = min(sub_batch_size, len(self.memory))
         mini_batch = np.random.randint(low=0,high=self.s.shape[0],size=batch_size)
@@ -197,13 +202,31 @@ class SarsaAgent:
 
         if len(self.memory) < self.train_start*1.05:
             verbose = True
-            epochs*=20
-        self.model_sr.fit(s, r, batch_size=self.batch_size,
-                       epochs=epochs, verbose=verbose)
+            epochs*=2
+        for i in range(10):
+            self.model_sr.fit(s, r, batch_size=self.batch_size,
+                           epochs=epochs, verbose=verbose)
+            mse = self.test_model(self.model_sr,s,r)
+            if epochs==1:
+                break
+            if np.std(r)==0:
+                break
+            if mse/np.std(r)<=1: #обучать до тех пор, пока не станет хорошо
+                break
         r_sr_predicted = self.model_sr.predict(s)
         #Предсказать дельту
         delta_r = r-r_sr_predicted
-        self.model_sar.fit(np.hstack((s,a)), delta_r, batch_size=self.batch_size,
-                       epochs=epochs, verbose=verbose)
+        
+        for i in range(10):
+            self.model_sar.fit(np.hstack((s,a)), delta_r, batch_size=self.batch_size,
+                           epochs=epochs, verbose=verbose)
+            mse = self.test_model(self.model_sar,np.hstack((s,a)),delta_r)
+            if epochs==1:
+                break
+            if np.std(delta_r)==0:
+                break
+            if mse/np.std(delta_r)<=0.35: #обучать до тех пор, пока не станет хорошо
+                break
+                
         if verbose:
             print('delta_r',np.std(delta_r),'r',np.std(r))
