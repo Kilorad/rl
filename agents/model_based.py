@@ -58,7 +58,7 @@ class ModelBasedAgent:
     def build_model(self,type):
         if type=='ss':
             input_dim = self.state_size + self.action_size 
-            out_dim = self.state_size + 1
+            out_dim = self.state_size + self.action_size + 1
         model = Sequential()
         model.add(Dense(300, input_dim=input_dim, activation='relu',
                         kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.001)))
@@ -78,19 +78,20 @@ class ModelBasedAgent:
 
     # get action from model using epsilon-greedy policy
     def get_action(self, state, verbose=0,extended=0):
-        if np.random.rand() <= self.epsilon or len(self.memory)<self.train_start:
+        if np.random.rand() <= self.epsilon or len(self.s)<self.train_start:
             return random.randrange(self.action_size)
         else:
             #Перебрать разные последовательности A, для них предсказать R
             r_predict_array = []
             plans = self.generate_plans(self.count_plans,self.actions_count,self.plan_len)
             for plan in plans:
-                r_predict_array.append(self.estimate_plan(state,plan)[0])
+                (reward_mean,s,a,r)=self.estimate_plan(state,plan)
+                r_predict_array.append(reward_mean)
             argmx = np.argmax(r_predict_array)
             plan = plans[argmx]
             if verbose:
                 print('r_predict_array',r_predict_array,plan)
-            return plan[0]
+            return int(plan[0])
     def generate_plan(self,actions_count,plan_len):
         plan = np.zeros(plan_len)
         for i in range(actions_count):
@@ -108,14 +109,17 @@ class ModelBasedAgent:
         for act in action_list:
             if act==-1:
                 act=action_by_model_based
-            a=np.zeros(self.action_size)
-            a[act]=1
-            sa = np.hstack((state,act))
-            print('sa',sa)
+            if (act<0) or (act>=self.action_size):
+                act = random.randrange(self.action_size)
+            act = int(act)
+            a_onehot=np.zeros(self.action_size)
+            a_onehot[act]=1
+            sa = np.hstack((np.array(state,ndmin=2),np.array(a_onehot,ndmin=2)))
             nsar=self.model_ss.predict(sa)
             s.append(nsar[:self.state_size])
-            action_by_model_based=nsar[self.state_size+1:self.state_size+self.action_size+1]
-            a.append(np.argmax(action_by_model_based))
+            action_by_model_based_one_hot=nsar[0,self.state_size+1:self.state_size+self.action_size+1]
+            action_by_model_based = np.argmax(action_by_model_based_one_hot)
+            a.append(action_by_model_based)
             rew=nsar[self.state_size+self.action_size:self.state_size+self.action_size+1]
             r.append(rew)
         reward_mean = np.mean(utils.exp_smooth(r,self.discount_factor,len(r)))
@@ -190,13 +194,13 @@ class ModelBasedAgent:
         for corrections_count in range(6):
             corrections_flag=False
             for i in range(self.action_size):
-                freq_arr[i]=np.mean(a[:,i]==1)
+                freq_arr[i]=np.mean(np.array(self.a)[:,i]==1)
                 if freq_arr[i]<0.3/self.action_size and freq_arr[i]>0:
                     corrections_flag=True
                     #размножаем
-                    idx_act_num = np.where(a[:,i]==1)[0]
-                    s_add = list(s[idx_act_num])
-                    s_add = [self.s[idx] for idx in idx_act_num
+                    idx_act_num = np.where(np.array(self.a)[:,i]==1)[0]
+                    #s_add = list(s[idx_act_num])
+                    s_add = [self.s[idx] for idx in idx_act_num]
                     ns_add = [self.ns[idx] for idx in idx_act_num]
                     d_add = [self.d[idx] for idx in idx_act_num]
                     a_add = [self.a[idx] for idx in idx_act_num]
@@ -224,21 +228,21 @@ class ModelBasedAgent:
         mse = np.mean(rmse_std)
         return mse
     def train_model(self,epochs=1,sub_batch_size=None,verbose=0):
-        if len(self.memory) < self.train_start:
+        if len(self.s) < self.train_start:
             return
         if sub_batch_size is None:
             sub_batch_size = self.sub_batch_size
         batch_size = max(self.batch_size,sub_batch_size)
-        batch_size = min(batch_size, len(self.memory))
+        batch_size = min(batch_size, len(self.s))
             
-        mini_batch = np.random.randint(low=0,high=self.s.shape[0],size=len(self.memory))
+        mini_batch = np.random.randint(low=0,high=len(self.s),size=len(self.s))
         #    
         (s,a,r,ns,d) = self.rebalance_data(mini_batch)
         if np.std(r)==0:
             return
         #                   
-        batch_size = min(sub_batch_size, len(self.memory))
-        mini_batch = np.random.randint(low=0,high=self.s.shape[0],size=batch_size)
+        batch_size = min(sub_batch_size, len(self.s))
+        mini_batch = np.random.randint(low=0,high=len(self.s),size=batch_size)
                              
         s = [self.s[idx] for idx in mini_batch]
         ns = [self.ns[idx] for idx in mini_batch]
@@ -252,16 +256,16 @@ class ModelBasedAgent:
             epochs*=2
         for i in range(10):
             s_arr=np.array(s)
-            nsr=np.hstack((np.array(ns),np.array(a),np.array(r)))
-            self.model_ss.fit(np.array(s), nsr, batch_size=self.batch_size,
+            nsar=np.hstack((np.array(ns)[:,0,:],np.array(a),np.array(r,ndmin=2).T))
+            sa=np.hstack((np.array(s)[:,0,:],np.array(a)))
+            self.model_ss.fit(sa, nsar, batch_size=self.batch_size,
                            epochs=epochs, verbose=verbose)
-            mse = self.test_model(self.model_ss,s_arr,nsr)
+            mse = self.test_model(self.model_ss,sa,nsar)
             if epochs==1:
                 break
             if np.std(r)==0:
                 break
             if mse<=0.3: #обучать до тех пор, пока не станет хорошо
-                break
-        r_sr_predicted = self.model_sr.predict(s)    
+                break 
         if verbose:
             print('self-test',mse)
