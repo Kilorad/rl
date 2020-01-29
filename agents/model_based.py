@@ -37,7 +37,7 @@ class ModelBasedAgent:
         self.planning_horison = 810
         
         
-        self.count_plans = 50
+        self.count_plans = 16
         self.actions_count = 10
         self.plan_len = 50
         # create replay memory using deque
@@ -100,6 +100,7 @@ class ModelBasedAgent:
         plan = np.zeros(plan_len)
         for i in range(actions_count):
             plan[random.randrange(plan_len-1)] = random.randrange(self.action_size)
+        plan[0]=random.randrange(self.action_size)
         return plan
     def generate_plans(self,count_plans,actions_count,plan_len):
         plans = [self.generate_plan(actions_count,plan_len) for i in range(count_plans) ]
@@ -126,7 +127,11 @@ class ModelBasedAgent:
             a.append(action_by_model_based)
             rew=nsar[self.state_size+self.action_size:self.state_size+self.action_size+1]
             r.append(rew)
-        reward_mean = np.mean(utils.exp_smooth(r,self.discount_factor,len(r)))
+        r_disco = utils.exp_smooth(r,self.discount_factor,len(r))
+        if len(r_disco)>0:
+            reward_mean = np.mean(r_disco)
+        else:
+            reward_mean = 0
         return(reward_mean,s,a,r)
     # save sample <s,a,r,s',d> to the replay memory
     def append_sample(self, state, action, reward, next_state, done):
@@ -149,7 +154,6 @@ class ModelBasedAgent:
         d = [self.d[idx] for idx in mini_batch]
         a = [self.a[idx] for idx in mini_batch]
         r = [self.r[idx] for idx in mini_batch]
-        
         mean = np.mean(r)
         #размножь большие
         idx_big = self.r>mean
@@ -264,7 +268,11 @@ class ModelBasedAgent:
             sa=np.hstack((np.array(s)[:,0,:],np.array(a)))
             self.model_ss.fit(sa, nsar, batch_size=self.batch_size,
                            epochs=epochs, verbose=verbose)
-            mse = self.test_model(self.model_ss,sa,nsar)
+            if sa.shape[0]==0:
+                print(sa.shape[0]==0)
+                mse = 500
+            else:
+                mse = self.test_model(self.model_ss,sa,nsar)
             if epochs==1:
                 break
             if np.std(r)==0:
