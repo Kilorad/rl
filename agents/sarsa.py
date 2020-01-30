@@ -17,7 +17,7 @@ import utils
 
 # double SARSA agent (sr+sar)
 class SarsaAgent:
-    def __init__(self, state_size, action_size):
+    def __init__(self, state_size, action_size, layers_size=[100,100]):
         self.render = False
         self.load_model = False
         # get size of state and action
@@ -35,6 +35,7 @@ class SarsaAgent:
         self.train_start = 2000
         self.reward_part_need = 0.3
         self.planning_horison = 810
+        self.layers_size = layers_size
         # create replay memory using deque
         self.memory = deque(maxlen=10000)
 
@@ -55,11 +56,11 @@ class SarsaAgent:
             input_dim = self.state_size
             out_dim = 1
         model = Sequential()
-        model.add(Dense(100, input_dim=input_dim, activation='relu',
+        model.add(Dense(self.layers_size[0], input_dim=input_dim, activation='relu',
                         kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.001)))
         model.add(BatchNormalization())
         model.add(Dropout(rate=0.5))
-        model.add(Dense(100, activation='relu',
+        model.add(Dense(self.layers_size[1], activation='relu',
                         kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.001)))
         model.add(BatchNormalization())
         model.add(Dropout(rate=0.5))

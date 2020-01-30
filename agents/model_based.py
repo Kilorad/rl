@@ -37,9 +37,9 @@ class ModelBasedAgent:
         self.planning_horison = 810
         
         
-        self.count_plans = 16
+        self.count_plans = 17
         self.actions_count = 10
-        self.plan_len = 50
+        self.plan_len = 70
         # create replay memory using deque
         memlen = 7000
 
@@ -60,15 +60,15 @@ class ModelBasedAgent:
             input_dim = self.state_size + self.action_size 
             out_dim = self.state_size + self.action_size + 1
         model = Sequential()
-        model.add(Dense(190, input_dim=input_dim, activation='relu',
+        model.add(Dense(260, input_dim=input_dim, activation='relu',
                         kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.001)))
         model.add(BatchNormalization())
         model.add(Dropout(rate=0.5))
-        model.add(Dense(190, activation='relu',
+        model.add(Dense(260, activation='relu',
                         kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.001)))
         model.add(BatchNormalization())
         model.add(Dropout(rate=0.5))
-        model.add(Dense(190, activation='relu',
+        model.add(Dense(260, activation='relu',
                         kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.001)))
         model.add(BatchNormalization())
         model.add(Dropout(rate=0.5))
