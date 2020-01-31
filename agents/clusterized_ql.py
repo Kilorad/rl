@@ -35,7 +35,7 @@ class ClusterQLAgent:
         self.train_start = 2000
         self.reward_part_need = 0.3
         self.planning_horison = 200
-        self.n_clusters=15
+        self.n_clusters=40
 
         # create replay memory using deque
         memlen = 15000
@@ -124,7 +124,7 @@ class ClusterQLAgent:
             #+1 редко, -1/7 часто - в идеале. Больше - лучше
         nsr_mn_centered=np.array(nsr_mn)-np.mean(nsr_mn)
         nsr_mn_normed=nsr_mn_centered/(2*np.std(nsr_mn_centered))#+-0.5. Больше - лучше
-        nsr_quality=np.mean(nsr_mn_normed**2)#посмотреть, насколько разные r в разных state
+        nsr_quality=np.mean(np.abs(nsr_mn_normed))#посмотреть, насколько разные r в разных state
         if diff:
             return (sans_quality,nsr_quality)
         else:
