@@ -34,11 +34,11 @@ class ClusterQLAgent:
         self.sub_batch_size=500
         self.train_start = 2000
         self.reward_part_need = 0.3
-        self.planning_horison = 100
-        
+        self.planning_horison = 200
+        self.n_clusters=15
 
         # create replay memory using deque
-        memlen = 7000
+        memlen = 15000
 
         # create main model and target model
         self.clusterizer = None
@@ -68,7 +68,7 @@ class ClusterQLAgent:
     #далее: q-матрицу составь
     def select_clusterizer(self):
         if self.clusterizer is None:
-            n_clusters=10
+            n_clusters=self.n_clusters
             self.clusterizer=self.make_clusterizer(n_clusters=n_clusters)
         quality_max=0
         for i in range(10):
@@ -120,9 +120,10 @@ class ClusterQLAgent:
         for action in range(self.action_size):
             sns_mx = sans_mn[action]
             mean_p = 1/self.action_size #средняя вероятность
-            sans_quality += np.nanmean((np.array(sans_mn)-mean_p)**2) #насколько чётко определены переходы
+            sans_quality += np.nanmean((np.array(sns_mx)-mean_p)**2) #насколько чётко определены переходы
+            #+1 редко, -1/7 часто - в идеале. Больше - лучше
         nsr_mn_centered=np.array(nsr_mn)-np.mean(nsr_mn)
-        nsr_mn_normed=nsr_mn_centered/np.std(nsr_mn_centered)
+        nsr_mn_normed=nsr_mn_centered/(2*np.std(nsr_mn_centered))#+-0.5. Больше - лучше
         nsr_quality=np.mean(nsr_mn_normed**2)#посмотреть, насколько разные r в разных state
         if diff:
             return (sans_quality,nsr_quality)
@@ -132,23 +133,24 @@ class ClusterQLAgent:
         #в nsr_mn может лежать Q для других итераций
         #Тут нахрен всё неверно
         if (saq_mn is None):
-            saq_mn=np.zeros((self.clusterizer.n_clusters,self.action_size))#в ячейках проставим реворды s,a->r
-        saq2_mn=np.zeros((self.clusterizer.n_clusters,self.action_size))#в ячейках проставим реворды s,a->r
-        #проставить награды в saq_mn
+            saq_mn=np.zeros((self.clusterizer.n_clusters,self.action_size))#в ячейках проставим реворды s,a->q
+        saq2_mn=np.zeros((self.clusterizer.n_clusters,self.action_size))
         
         for action in range(self.action_size):
             for s in range(self.clusterizer.n_clusters):
                 #print(saq_mn.shape,sans_mn[action][s,:].shape,np.dot(sans_mn[action][s,:],saq_mn).shape)
                 saq2_mn[s,action] = np.nanmean(np.dot(sans_mn[action][s,:],saq_mn))
                 #взвешенная по вероятностям сумма q за следующий такт
+        #print(saq2_mn)
         #sar_mn: (s,a) -> action
-        maxq = np.max(saq_mn,axis=0)#argamax(s,a->среднее r за следующий такт)  
+        maxq = np.max(saq2_mn,axis=0)#argamax(s,a->среднее r за следующий такт)  
         for action in range(self.action_size):
             for s in range(self.clusterizer.n_clusters):
                 #print(saq2_mn.shape,nsr_mn.shape)
                 #print(nsr_mn.shape,s,maxq.shape,action)
                 saq2_mn[s,action]=nsr_mn[s]+maxq[action]*disco  #докинуть ещё r за этот такт
         return saq2_mn
+    
     def make_q_full(self,sans_mn,nsr_mn,disco=0.99,horison=10):   
         saq_mn = None
         for i in range(horison):
