@@ -83,7 +83,7 @@ class ClusterQLAgent:
                 self.sans_mn=sans_mn
                 self.nsr_mn=nsr_mn
     def make_clusterizer(self,n_clusters=8):    
-        clusterizer=cluster.MiniBatchKMeans(n_clusters=n_clusters, init='k-means++', max_iter=200, batch_size=500, verbose=0, compute_labels=True, random_state=None, tol=0.0, max_no_improvement=10, init_size=None, n_init=3, reassignment_ratio=0.01)
+        clusterizer=cluster.KMeans(n_clusters=n_clusters, max_iter=200, verbose=0, random_state=None, n_jobs=5)
         clusterizer.fit(self.s)
         return clusterizer
     def make_matrix(self,clusterizer):
