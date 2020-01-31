@@ -25,7 +25,7 @@ class ClusterQLAgent:
         self.action_size = action_size
 
         # these is hyper parameters for the Double DQN
-        self.discount_factor = 0.995
+        self.discount_factor = 0.99
         self.learning_rate = 0.001
         self.epsilon = 1.0
         self.epsilon_decay = 0.994
@@ -34,7 +34,7 @@ class ClusterQLAgent:
         self.sub_batch_size=500
         self.train_start = 2000
         self.reward_part_need = 0.3
-        self.planning_horison = 810
+        self.planning_horison = 100
         
 
         # create replay memory using deque
@@ -60,11 +60,10 @@ class ClusterQLAgent:
         else:
             # A, для них предсказать Q
             q_predict_array = []
-            s=self.clusterizer(state[0,:])
-            saq=np.array(self.saq_mn)
-            a = np.argmax(saq_mn[s,:])
+            s=self.clusterizer.predict(np.array(state,ndmin=2))
+            a = np.argmax(self.saq_mn[s,:])
             if verbose:
-                print('q',saq_mn[s,a],a)
+                print('q',self.saq_mn[s,a],a)
             return a
     #далее: q-матрицу составь
     def select_clusterizer(self):
@@ -105,9 +104,9 @@ class ClusterQLAgent:
                         p = np.nan
                     sns_mx[s,ns]=p
             sans_mn.append(sns_mx)
-        nsr_mn=np.zeros((clusterizer.n_clusters,clusterizer.n_clusters)) + np.nan
+        nsr_mn=np.zeros(clusterizer.n_clusters) + np.nan
         for ns in range(clusterizer.n_clusters):
-            idx_full = (ns_clusters==ns)
+            idx_full = np.where((ns_clusters==ns))[0]
             r_lst = [self.r[idx] for idx in idx_full] 
             if len(r_lst)>0:
                 r_mean=np.mean(r_lst)
@@ -129,25 +128,31 @@ class ClusterQLAgent:
             return (sans_quality,nsr_quality)
         else:
             return nsr_quality+sans_quality
-    def make_q_iter(self,sans_mn,nsr_mn,disco=0.99):
+    def make_q_iter(self,sans_mn,nsr_mn,saq_mn=None,disco=0.99):
         #в nsr_mn может лежать Q для других итераций
         #Тут нахрен всё неверно
-        saq_mn = []
-        sar_mn=np.zeros(self.clusterizer.n_clusters,self.action_size)#в ячейках проставим реворды s,a->r
+        if (saq_mn is None):
+            saq_mn=np.zeros((self.clusterizer.n_clusters,self.action_size))#в ячейках проставим реворды s,a->r
+        saq2_mn=np.zeros((self.clusterizer.n_clusters,self.action_size))#в ячейках проставим реворды s,a->r
+        #проставить награды в saq_mn
+        
         for action in range(self.action_size):
-            for ns in range(self.clusterizer.n_clusters):
-                r = nsr_mn[ns]
-                print(len(sans_mn))
-                print(self.clusterizer.n_clusters)
-                print(np.nanmean(r*sans_mn[ns]))
-                sar_mn[ns,action] = np.nanmean(r*sans_mn[ns])
-        maxr = np.max(sar_mn,axis=1)#argamax(s,a->среднее r)
-        saq_mn.append(maxr*disco + nsr_mn)
-        return saq_mn
+            for s in range(self.clusterizer.n_clusters):
+                #print(saq_mn.shape,sans_mn[action][s,:].shape,np.dot(sans_mn[action][s,:],saq_mn).shape)
+                saq2_mn[s,action] = np.nanmean(np.dot(sans_mn[action][s,:],saq_mn))
+                #взвешенная по вероятностям сумма q за следующий такт
+        #sar_mn: (s,a) -> action
+        maxq = np.max(saq_mn,axis=0)#argamax(s,a->среднее r за следующий такт)  
+        for action in range(self.action_size):
+            for s in range(self.clusterizer.n_clusters):
+                #print(saq2_mn.shape,nsr_mn.shape)
+                #print(nsr_mn.shape,s,maxq.shape,action)
+                saq2_mn[s,action]=nsr_mn[s]+maxq[action]*disco  #докинуть ещё r за этот такт
+        return saq2_mn
     def make_q_full(self,sans_mn,nsr_mn,disco=0.99,horison=10):   
-        saq_mn = nsr_mn.copy()
+        saq_mn = None
         for i in range(horison):
-            saq_mn = self.make_q_iter(sans_mn,saq_mn.copy(),self.discount_factor)
+            saq_mn = self.make_q_iter(sans_mn,nsr_mn,saq_mn,self.discount_factor)
         return saq_mn
                                    
    
@@ -165,9 +170,11 @@ class ClusterQLAgent:
 
     
     def update_target_model(self):
-        self.train_model(verbose=1)
+        self.train_model(verbose=1,stop=False)
 
-    def train_model(self,epochs=1,sub_batch_size=None,verbose=0):
+    def train_model(self,stop=True,verbose=0):
+        if stop:#костыль
+            return
         if len(self.s) < self.train_start:
             return
 
