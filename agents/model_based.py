@@ -227,13 +227,35 @@ class ModelBasedAgent:
     def update_target_model(self):
         self.train_model(epochs=30,sub_batch_size=6000,verbose=0)
         self.train_model(epochs=1,sub_batch_size=6000,verbose=1)
-    def test_model(self,model,X,Y):
+    def test_model(self,model,X,Y,draw=False):
         #нормированный rmse по всем выходам сети
+        Y_pred = model.predict(X)
         rmse_raw = metrics.mean_squared_error(model.predict(X),Y,squared=False,multioutput='raw_values')
         std_arr = np.std(Y,axis=0)
         std_arr[std_arr==0]=1
         rmse_std = rmse_raw/std_arr
         mse = np.mean(rmse_std)
+        if draw:
+            count = 200
+            mini_batch = np.zeros(len(self.s))
+            mini_batch[-count:]=1
+            mini_batch = np.where(mini_batch)[0]
+            s = [self.s[idx] for idx in mini_batch]
+            ns = [self.ns[idx] for idx in mini_batch]
+            d = [self.d[idx] for idx in mini_batch]
+            a = [self.a[idx] for idx in mini_batch]
+            r = [self.r[idx] for idx in mini_batch]
+            s_arr=np.array(s)
+            nsar=np.hstack((np.array(ns)[:,0,:],np.array(a),np.array(r,ndmin=2).T))
+            sa=np.hstack((np.array(s)[:,0,:],np.array(a)))
+            X = sa
+            Y = nsar
+            Y_pred = model.predict(X)
+            for i in range(Y.shape[1]):
+                print('Y'+str(i))
+                plt.plot(Y_pred[:,i])
+                plt.plot(Y[:,i])
+                plt.show()
         return mse
     def train_model(self,epochs=1,sub_batch_size=None,verbose=0):
         if len(self.s) < self.train_start:
@@ -272,7 +294,7 @@ class ModelBasedAgent:
                 print(sa.shape[0]==0)
                 mse = 500
             else:
-                mse = self.test_model(self.model_ss,sa,nsar)
+                mse = self.test_model(self.model_ss,sa,nsar,draw=False)
             if epochs==1:
                 break
             if np.std(r)==0:
@@ -280,4 +302,5 @@ class ModelBasedAgent:
             if mse<=0.3: #обучать до тех пор, пока не станет хорошо
                 break 
         if verbose:
+            self.test_model(self.model_ss,sa,nsar,draw=True)
             print('self-test',mse)
