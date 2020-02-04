@@ -31,13 +31,13 @@ class ModelBasedAgent:
         self.epsilon_decay = 0.999
         self.epsilon_min = 0.01
         self.batch_size = 3000
-        self.sub_batch_size=500
-        self.train_start = 2000
+        self.sub_batch_size=50
+        self.train_start = 1000
         self.reward_part_need = 0.3
         self.planning_horison = 810
         
         
-        self.count_plans = 17
+        self.count_plans = 32
         self.actions_count = 10
         self.plan_len = 70
         # create replay memory using deque
@@ -83,6 +83,8 @@ class ModelBasedAgent:
     # get action from model using epsilon-greedy policy
     def get_action(self, state, verbose=0,extended=0):
         if np.random.rand() <= self.epsilon or len(self.s)<self.train_start:
+            if verbose:
+                print('r_predict_array random')
             return random.randrange(self.action_size)
         else:
             #Перебрать разные последовательности A, для них предсказать R
@@ -125,7 +127,7 @@ class ModelBasedAgent:
             action_by_model_based_one_hot=nsar[0,self.state_size+1:self.state_size+self.action_size+1]
             action_by_model_based = np.argmax(action_by_model_based_one_hot)
             a.append(action_by_model_based)
-            rew=nsar[self.state_size+self.action_size:self.state_size+self.action_size+1]
+            rew=nsar[0][self.state_size+self.action_size:self.state_size+self.action_size+1]
             r.append(rew)
         r_disco = utils.exp_smooth(r,self.discount_factor,len(r))
         if len(r_disco)>0:
@@ -302,5 +304,6 @@ class ModelBasedAgent:
             if mse<=0.3: #обучать до тех пор, пока не станет хорошо
                 break 
         if verbose:
-            self.test_model(self.model_ss,sa,nsar,draw=True)
+            if verbose==2:
+                self.test_model(self.model_ss,sa,nsar,draw=True)
             print('self-test',mse)
