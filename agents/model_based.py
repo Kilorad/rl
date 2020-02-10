@@ -24,7 +24,7 @@ class ModelBasedAgent:
         self.state_size = state_size
         self.action_size = action_size
 
-        # these is hyper parameters for the Double DQN
+        # these is hyper parameters for the Model Based
         self.discount_factor = 0.995
         self.learning_rate = 0.001
         self.epsilon = 1.0
@@ -33,7 +33,7 @@ class ModelBasedAgent:
         self.batch_size = 3000
         self.sub_batch_size=50
         self.train_start = 1000
-        self.reward_part_need = 0.3
+        self.reward_part_need = 0.45
         self.planning_horison = 810
         
         
@@ -232,7 +232,7 @@ class ModelBasedAgent:
     def test_model(self,model,X,Y,draw=False):
         #нормированный rmse по всем выходам сети
         Y_pred = model.predict(X)
-        rmse_raw = np.sqrt(metrics.mean_squared_error(model.predict(X),Y,multioutput='raw_values'))
+        rmse_raw = np.sqrt(metrics.mean_squared_error(Y_pred,Y,multioutput='raw_values'))
         std_arr = np.std(Y,axis=0)
         std_arr[std_arr==0]=1
         rmse_std = rmse_raw/std_arr
@@ -259,6 +259,49 @@ class ModelBasedAgent:
                 plt.plot(Y[:,i])
                 plt.show()
         return mse
+    def test_model_recursive(self,tact_count=70,draw=True):
+        #перемотать время на tact_count тактов назад
+        #нормированный rmse по всем выходам сети
+        X = np.hstack((np.array(self.ns)[:,0,:],np.array(self.a),np.array(self.r,ndmin=2).T))
+        nsar = X[-tact_count:-tact_count+1,:]
+        s = []
+        a = []
+        r = []
+        action_by_model_based_one_hot=nsar[0,self.state_size+1:self.state_size+self.action_size+1]
+        action_by_model_based = np.argmax(action_by_model_based_one_hot)
+        for i in range(tact_count):
+            state = nsar[:,:self.state_size]
+            a_onehot=np.zeros(self.action_size)
+            a_onehot[action_by_model_based]=1
+            sa = np.hstack((np.array(state,ndmin=2),np.array(a_onehot,ndmin=2)))
+            nsar=self.model_ss.predict(sa)
+            s.append(nsar[:self.state_size])
+            action_by_model_based_one_hot=nsar[0,self.state_size+1:self.state_size+self.action_size+1]
+            action_by_model_based = np.argmax(action_by_model_based_one_hot)
+            a.append(action_by_model_based)
+            rew=nsar[0][self.state_size+self.action_size:self.state_size+self.action_size+1]
+            r.append(rew)
+        r_disco = utils.exp_smooth(r,self.discount_factor,len(r))
+        if len(r_disco)>0:
+            reward_mean_predict = np.mean(r_disco)
+        else:
+            reward_mean_predict = 0
+        reward_mean_fact = np.mean(utils.exp_smooth(X[:,self.state_size+1],self.discount_factor,len(r)))
+            
+        s = np.array(s)[:,0,:]
+        #rmse_raw = np.sqrt(metrics.mean_squared_error(s,X[-tact_count:,:self.state_size+1],multioutput='raw_values'))
+        #std_arr = np.std(Y,axis=0)
+        #std_arr[std_arr==0]=1
+        #rmse_std = rmse_raw/std_arr
+        #mse = np.mean(rmse_std)
+        
+        if draw:
+            for i in range(s.shape[1]):
+                print('Y'+str(i),(np.mean(s[:,i]),len(s[:,i])),(np.mean(X[-tact_count:,i]),len(X[-tact_count:,i])))
+                plt.plot(s[:,i])
+                plt.plot(X[-tact_count:,i])
+                plt.show()
+        return (reward_mean_fact,reward_mean_predict)
     def train_model(self,epochs=1,sub_batch_size=None,verbose=0):
         if len(self.s) < self.train_start:
             return
@@ -286,7 +329,7 @@ class ModelBasedAgent:
         if len(self.s) < self.train_start*1.05:
             verbose = True
             epochs*=2
-        for i in range(10):
+        for i in range(4):
             s_arr=np.array(s)
             nsar=np.hstack((np.array(ns)[:,0,:],np.array(a),np.array(r,ndmin=2).T))
             sa=np.hstack((np.array(s)[:,0,:],np.array(a)))
