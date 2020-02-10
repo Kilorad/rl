@@ -232,7 +232,7 @@ class ModelBasedAgent:
     def test_model(self,model,X,Y,draw=False):
         #нормированный rmse по всем выходам сети
         Y_pred = model.predict(X)
-        rmse_raw = metrics.mean_squared_error(model.predict(X),Y,squared=False,multioutput='raw_values')
+        rmse_raw = np.sqrt(metrics.mean_squared_error(model.predict(X),Y,multioutput='raw_values'))
         std_arr = np.std(Y,axis=0)
         std_arr[std_arr==0]=1
         rmse_std = rmse_raw/std_arr
