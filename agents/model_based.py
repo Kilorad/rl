@@ -60,22 +60,22 @@ class ModelBasedAgent:
             input_dim = self.state_size + self.action_size 
             out_dim = self.state_size + self.action_size + 1
         model = Sequential()
-        model.add(Dense(260, input_dim=input_dim, activation='relu',
+        model.add(Dense(460, input_dim=input_dim, activation='relu',
                         kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.001)))
         model.add(BatchNormalization())
         model.add(Dropout(rate=0.5))
-        model.add(Dense(260, activation='relu',
+        model.add(Dense(360, activation='relu',
                         kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.001)))
         model.add(BatchNormalization())
         model.add(Dropout(rate=0.5))
-        model.add(Dense(260, activation='relu',
+        model.add(Dense(460, activation='relu',
                         kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.001)))
         model.add(BatchNormalization())
         model.add(Dropout(rate=0.5))
         model.add(Dense(out_dim, activation='linear',
                         kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.001)))
         model.summary()
-        model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
+        model.compile(loss='mae', optimizer=Adam(lr=self.learning_rate))
 
         return model
 
