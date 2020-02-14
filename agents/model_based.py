@@ -75,7 +75,7 @@ class ModelBasedAgent:
         model.add(Dense(out_dim, activation='linear',
                         kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.001)))
         model.summary()
-        model.compile(loss='mae', optimizer=Adam(lr=self.learning_rate))
+        model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
 
         return model
 
