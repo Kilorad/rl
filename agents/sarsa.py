@@ -2,7 +2,6 @@ import gym
 import sys
 import pylab
 import random
-import aa_gun
 import numpy as np
 from collections import deque
 import keras
