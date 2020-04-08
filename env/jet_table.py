@@ -39,7 +39,7 @@ class jet_table_env(gym.Env):
     Starting State:
         All observations are assigned a uniform random value in [-0.05..0.05]
     Episode Termination:
-        Episode length is greater than 250
+        Episode length is no greater than 350
     """
     
     metadata = {
@@ -79,11 +79,11 @@ class jet_table_env(gym.Env):
         self.make_map()
         
     def make_map(self):
-        self.table = {'x':16.,'y':16.,'vx':0.,'vy':0.}
+        self.table = {'x':18.,'y':18.,'vx':0.,'vy':0.}
         self.target = {'x':1.,'y':1.}
-        self.obstacle_map = np.ones((18,18))
+        self.obstacle_map = np.ones((21,21))
         self.obstacle_map[1:self.obstacle_map.shape[0]-1,1:self.obstacle_map.shape[1]-1]=0
-        for i in range(7):
+        for i in range(9):
             orientation = np.random.rand()<0.5
             start = int(np.random.rand()*(self.obstacle_map.shape[0]-2))#1я координата
             length = int(np.random.rand()*(self.obstacle_map.shape[0]-2)*0.6)
@@ -163,7 +163,8 @@ class jet_table_env(gym.Env):
             radar[radar_names[i]] = r_value
         ##
         rng2 = np.sqrt(((self.table['x']-self.target['x'])**2 + (self.table['y']-self.target['y'])**2 ))
-        self.reward = rng1-rng2
+        #self.reward = rng1-rng2
+        self.reward = -rng2
         
         self.t += 1  
         self.state = (self.t,
@@ -177,7 +178,7 @@ class jet_table_env(gym.Env):
                       radar['down'],
                       self.reward)
         ############
-        done = bool(self.t>=250)
+        done = bool(self.t>=350)
         if not done:
             pass
         elif self.steps_beyond_done is None:

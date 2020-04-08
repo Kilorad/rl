@@ -3,7 +3,7 @@ import pylab
 import random
 import numpy as np
 from collections import deque
-from scipy.spatial import distance
+from sklearn.metrics import pairwise
 import keras
 from keras.layers import Dense, Dropout
 from keras.optimizers import Adam
@@ -83,7 +83,7 @@ class GoalAgent:
 
     # get action from model using epsilon-greedy policy
     def get_action(self, state,state_goal, verbose=0):
-        if np.random.rand() <= self.epsilon or self.s.shape[0]<self.train_start:
+        if np.random.rand() <= self.epsilon or len(self.s)<self.train_start:
             return random.randrange(self.action_size)
         else:
             #Перебрать все A, для них предсказать дельта R
@@ -117,15 +117,15 @@ class GoalAgent:
         std_values = np.std(s_arr,axis=1)
         std_values[std_values==0] = 1
         #косинусные меры расстояний между текущим и желаемым state
-        r = distance.cosine((s_arr - mean_values)/std_values,(s_g_arr - mean_values)/std_values)
+        r = pairwise.cosine_similarity((s_arr - mean_values)/std_values,(s_g_arr - mean_values)/std_values)
         #какая проблема? Все координаты равнозначны. Важны только распределения - большие дельты могут выйти лишь при сильной неравномерности по одной из координат.
         #не выйдет ли так, что реально важна лишь одна (малое подмножество) координата, а мы оптимизируем все, и той одной пренебрегаем?
         return r
     
     #по смыслу эти награды - расстояния от целевого state до текущего.
     def make_discounted_rewards(self):
-        s_arr = np.array(self.s)
-        s_g_arr = np.array(self.s_g)
+        s_arr = np.array(self.s)[:,0,:]
+        s_g_arr = np.array(self.s_g)[:,0,:]
         self.r = self.make_cos_distances(s_arr,s_g_arr)
         
         idx_borders = np.array(self.done)
@@ -219,18 +219,18 @@ class GoalAgent:
         return mse
     
     def train_model(self,epochs=1,sub_batch_size=None,verbose=0):
-        if self.s.shape[0] < self.train_start:
+        if len(self.s) < self.train_start:
             return
         if sub_batch_size is None:
             sub_batch_size = self.sub_batch_size
         #награды - это дистанции до цели
         self.make_discounted_rewards()
         batch_size = max(self.batch_size,sub_batch_size)
-        batch_size = min(batch_size, self.s.shape[0])
+        batch_size = min(batch_size, len(self.s))
         #batch_size - это или self.batch_size, или кастомный sub_batch_size, если он больше, или длина дека, когда она меньше
         #batch_size применяется, чтобы отобрать часть экземпляров для обучения, и это же размер батча для нейронки
         for i in range(6):
-            mini_batch = np.random.randint(low=0,high=self.s.shape[0],size=self.s.shape[0])
+            mini_batch = np.random.randint(low=0,high=len(self.s),size=len(self.s))
             #я хочу, чтобы в батч попали награды, чтобы было, за что цепляться
             r = self.r_disco[mini_batch,:]
             if np.max(r)!=np.min(r):
@@ -245,7 +245,7 @@ class GoalAgent:
             #Нечего тут учить
             return
 
-        if self.s.shape[0] < self.train_start*1.05:
+        if len(self.s) < self.train_start*1.05:
             #инициализация
             verbose = True
             epochs*=2
@@ -283,7 +283,7 @@ class DistanceMeasure:
     def __init__(self, state_size, layers_size=[100,100]):
         # get size of state and action
         self.state_size = state_size
-
+        self.learning_rate = 0.001
         self.batch_size = 3000
         self.layers_size = layers_size
         # максимальное теоретическое расстояние между 2 точками. В кадрах
@@ -312,24 +312,28 @@ class DistanceMeasure:
     def fit(self,s,done,epochs=1,verbose=0):
         #берём последовательность s
         #берём рандомные пары и рассчитываем время между ними
+        done=np.array(done)
         s = np.array(s)
-        idx_start = np.random.randint(low=0,high=self.s.shape[0],size=self.pairs_count)
+        idx_start = np.random.randint(low=0,high=len(s),size=self.pairs_count)
         #
         idx_len = np.random.randint(low=0,high=self.max_distance,size=self.pairs_count)
         idx_end = idx_start + idx_len
+        idx_end[idx_end>len(s)-1] = len(s)-1
         #выкинуть ситуации, где done попало в кадр
-        done_sums = [sum(done[idx_start[i]:idx_end[i]]) for i in range(len(idx_start))]
+        done_sums = np.array([sum(done[idx_start[i]:idx_end[i]]) for i in range(len(idx_start))])
         idx_start = idx_start[done_sums==0]
         idx_end = idx_end[done_sums==0]
         idx_len = idx_len[done_sums==0]
         
-        s1 = s[idx_start,:]
-        s2 = s[idx_end,:]
-        self.model.fit(np.hstack((s1,s2)),idx_len)
+        s1 = s[idx_start,0,:]
+        s2 = s[idx_end,0,:]
+        self.model.fit(np.hstack((s1,s2)),idx_len, batch_size=400,
+                           epochs=epochs*10, verbose=verbose)
         
     def predict(self,s1,s2,epochs=1,verbose=0):
         #сразу адаптируем под вектора
-        self.model.predict(np.hstack((s1,s2)))
+        pred = self.model.predict(np.hstack((s1,s2)))
+        return pred
 
 #Cборщик графов. Он берёт n рандомных состояний и рассчитывает расстояние (направленное!) между каждыми двумя. Есть опция “добавить вершину” (с расчётом всех рёбер) и “удалить вершину”. А так же пересчитать рёбра. Текущий state добавляется, целевые state должны быть добавлены изначально.
 class StatesGraph:
@@ -346,33 +350,39 @@ class StatesGraph:
         l = len(state_list)
         idx = random.sample(range(l), min(int(l*max_points_part),max_points_abs))
         state_list_sparce = [state_list[i] for i in idx]
-        add_node_list(state_list,filtration_min_rel=filtration_min_rel,filtration_min_abs=filtration_min_abs)
+        self.add_node_list(state_list,filtration_min_rel=filtration_min_rel,filtration_min_abs=filtration_min_abs)
         
     def add_node_list(self,state_list,filtration_min_rel=0.05,filtration_min_abs=5):
         #Опасно! Может повесить комп!
         #filtration_min - минимальное расстояние, относительное и абсолютное
+        if filtration_min_rel is None:
+            filtration_min_rel = 0.05
         #ноды должны быть hashable. А значит - ну пусть string
         old_nodes = list(self.graph.nodes)
         #затем пробежаться по всем новым state и всем старым и создать пары старый-новый
-        edges_coord = itertools.product(old_nodes, state_list) + itertools.product(state_list, old_nodes)
+        edges_coord = list(itertools.product(old_nodes, state_list)) + list(itertools.product(state_list, old_nodes)) + list(itertools.product(state_list, state_list))
         edges_coord_np = np.array(edges_coord)
-        edges_values = self.dist_meas.predict(edges_coord_np)
-        
+        #print('edges_coord_np ',edges_coord_np.shape )#,edges_coord_np
+        edges_values = self.dist_meas.predict(edges_coord_np[:,0,0,:],edges_coord_np[:,1,0,:])
         idx = (edges_values>filtration_min_abs) & (edges_values>np.percentile(edges_values,filtration_min_rel*100))
+        idx = idx.ravel()
+        idx = np.where(idx)[0]
         for i in idx:
-            self.graph.add_edge(edges_coord[i][0],edges_coord[i][1],length=edges_values[i])
+            self.graph.add_edge(str(edges_coord[i][0]),str(edges_coord[i][1]),length=edges_values[i])
     def rewrite_edges(self,filtration_min_rel=0.05,filtration_min_abs=5):
         #обновить веса рёбер и дропнуть короткие рёбра
         #filtration_min - минимальное расстояние, относительное и абсолютное
         nodes = list(self.graph.nodes)
         edges_coord = itertools.product(nodes, nodes)
         edges_coord_np = np.array(edges_coord)
-        edges_values = self.dist_meas.predict(edges_coord_np)
-        idx = (edges_values>filtration_min_abs) & (edges_values>np.percentile(edges_values,filtration_min_rel*100))
+        #print('edges_coord_np ',edges_coord_np.shape )#,edges_coord_np
+        edges_values = self.dist_meas.predict(edges_coord_np[:,0,0,:],edges_coord_np[:,1,0,:])
+        
+        idx = np.where(edges_values>filtration_min_abs) & (edges_values>np.percentile(edges_values,filtration_min_rel*100))
         #очистить граф
         self.graph = nx.DiGraph()
         for i in idx:
-            self.graph.add_edge(edges_coord[i][0],edges_coord[i][1],length=edges_values[i])
+            self.graph.add_edge(str(edges_coord[i][0]),str(edges_coord[i][1]),length=edges_values[i])
     
     def add_goal_states(self,state_list,filtration_min_rel=0.05,filtration_min_abs=5):
         #добавить целевые состояния
@@ -424,6 +434,12 @@ class StatesGraph:
 class GraphAI(StatesGraph):
     def __init__(self,state_size, action_size,layers_size=[200,200],goal_state_list=[]):
         self.render = False
+        self.action_size=action_size
+        self.state_size=state_size
+        #цель, которую мы записываем при логировании. По смыслу то же, что и current goal. Но она должна
+        #быть определена, есть current goal не определена, и должна меняться не каждый ход, а раз в несколько ходов
+        self.write_goal = None 
+        
         #turn - это про то, как добавлять точки каждый ход. Вероятность и число
         self.p_add_points_turn=0.01
         self.max_points_abs_turn=5
@@ -433,7 +449,7 @@ class GraphAI(StatesGraph):
         self.max_points_abs_episode=20
         self.max_points_part_episode=0.2
         #минимальная длина ребра
-        self.min_edge=5
+        self.min_edge=2
         #прунинг графа. Грохаем самые короткие рёбра
         self.quantile_edge_min = 0.02
         #окно измерения скорости сближения
@@ -464,11 +480,22 @@ class GraphAI(StatesGraph):
         
         self.auto_aiming_reward_quantile = 0.8 #1 - значит, мы обрубаем эту фичу
         
+        #частота, с которой мы проводим ревизию верхнеуровневых goal
+        self.drop_goals_by_reward = 0.01
+        
         
     def get_action(self, state, verbose=0):
         #Использовать rl
         goal_changed = False
-        if self.rl.s.shape[0]<self.rl.train_start:
+        self.write_goal = self.current_goal
+        if len(self.rl.s)<self.rl.train_start:
+            #задать рандомную цель, чтобы что-то логировалось, и хоть как-то измерялись расстояния
+            if (self.write_goal is None) or (np.random.rand()<0.07):
+                idx = int(np.random.rand()*(len(self.rl.s)-1))
+                if idx>0:
+                    self.write_goal=self.rl.s[idx]
+                else:
+                    self.write_goal=state
             return random.randrange(self.action_size)
         else:
             if (self.mean_std_s is None) or (np.random.rand()<self.frequency_mean_std_update):
@@ -488,7 +515,7 @@ class GraphAI(StatesGraph):
             speed_closing_cos_dist = (self.cos_distance[-1]+self.cos_distance[-2]) - (self.cos_distance[-len_window_distance]+self.cos_distance[-len_window_distance+1])
             
             #speed_closing_cos_dist - если положительное, то мы сближаемся, если отрицательное, то отдаляемся
-            if (self.current_goal is None) or ((speed_closing_cos_dist<self.quantile_edge_min) and (try_time_fact>self.min_try_time):
+            if (self.current_goal is None) or ((speed_closing_cos_dist<self.quantile_edge_min) and (try_time_fact>self.min_try_time)):
                 route = self.make_route_to_all_states(self,state,self.goal_state_list)
                 
                 lst = re.findall('\d+\.\d+',route[1])
@@ -501,20 +528,53 @@ class GraphAI(StatesGraph):
                 
             self.rl.get_action(state,self.current_goal)
             
-            cos_dist = distance.cosine((state - self.mean_std_s[0])/self.mean_std_s[1],(self.current_goal - self.mean_std_s[0])/self.mean_std_s[1])
+            cos_dist = pairwise.cosine_similarity((state - self.mean_std_s[0])/self.mean_std_s[1],(self.current_goal - self.mean_std_s[0])/self.mean_std_s[1])
             self.cos_distance.append(cos_dist)
             self.goal_changed.append(goal_changed)
             
     # save sample <s,s_g,a,r,s'> to the replay memory of rl
     #у графа даже своей replay-памяти нет - а нафиг дублирование (можно сделать, если это будет важно)
-    def append_sample(self, state, state_goal, action, reward, next_state, done):
-        self.rl.append_sample(state, state_goal, action, reward, next_state, done)
+    def append_sample(self, state, action, reward, next_state, done):
+          
+        self.rl.append_sample(state, self.write_goal, action, reward, next_state, done)
         self.reward.append(reward)
         
         
-    def train_model(self,epochs=1,sub_batch_size=6000,max_points_abs=self.max_points_abs_turn,
-                    max_points_part=self.max_points_part_turn,
-                    filtration_min_rel=self.quantile_edge_min,filtration_min_abs=self.min_edge,verbose=0):
+    def train_model(self,epochs=1,sub_batch_size=6000,max_points_abs=None,
+                    max_points_part=None,
+                    filtration_min_rel=None,filtration_min_abs=None,verbose=0):
+        if len(self.rl.s) < self.rl.train_start:
+            return
+        if max_points_part is None:
+            max_points_part = self.max_points_part_turn
+        if filtration_min_rel is None:
+            filtration_min_rel = self.quantile_edge_min
+        if filtration_min_abs is None:
+            filtration_min_abs = self.min_edge
+        if max_points_abs is None:    
+            max_points_abs = self.max_points_abs_turn
+            
+        self.fit_dist_measure(self.rl.s,self.rl.done,epochs=epochs,verbose=0)
+        if len(self.goal_state_list)==0:
+            #нет целевых состояний
+            #добавить reward-ы в качестве целевых точек.
+            quantile = np.percentile(np.array(self.reward),self.auto_aiming_reward_quantile*100)
+            idx = np.array(self.reward)>quantile
+            idx_num = np.where(idx)[0]
+            #это те точки, что надо добавить
+            state_list = [self.rl.s[i] for i in idx_num]
+            self.add_node_list_safety(state_list,self.max_points_abs_episode, 1,filtration_min_rel,filtration_min_abs)
+            self.goal_state_list.extend(state_list)
+        if np.random.rand()<self.drop_goals_by_reward:
+            #пересмотр верхнеуровневых целей. Отбросить те, где реворд мелкий.
+            #реворд - последний столбец в state
+            quantile = np.percentile(np.array(self.reward),self.auto_aiming_reward_quantile*100)
+            goal_state_list_new = []
+            for goal in self.goal_state_list:
+                if goal[-1]>=quantile:
+                    goal_state_list_new.append(goal)
+            self.goal_state_list = goal_state_list_new
+
         #добавить новые точки в граф
         if np.random.rand()<self.p_add_points_turn:
             self.add_node_list_safety(self.rl.s,max_points_abs, max_points_part,filtration_min_rel,filtration_min_abs)
@@ -522,13 +582,16 @@ class GraphAI(StatesGraph):
         self.rl.train_model(epochs,sub_batch_size,verbose)
         
     def update_target_model(self):
+        if len(self.rl.s) < self.rl.train_start:
+            return
         #добавить reward-ы в качестве целевых точек.
         quantile = np.percentile(np.array(self.reward),self.auto_aiming_reward_quantile*100)
         idx = np.array(self.reward)>quantile
         idx_num = np.where(idx)[0]
         #это те точки, что надо добавить
         state_list = [self.rl.s[i] for i in idx_num]
-        self.add_node_list_safety(state_list,self.max_points_abs_episode, 1,filtration_min_rel,filtration_min_abs)
+        self.add_node_list_safety(state_list,self.max_points_abs_episode, 1,self.quantile_edge_min,self.min_edge)
+        self.goal_state_list.extend(state_list)
         #
         self.train_model(epochs=30,sub_batch_size=6000,verbose=0,
                          max_points_abs=self.max_points_abs_episode,max_points_part=self.max_points_part_episode)
