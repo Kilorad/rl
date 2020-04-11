@@ -15,7 +15,6 @@ import networkx as nx
 import itertools
 import utils
 
-
 #RL вида (S,S’,A)->R. А R как рассчитывать? По идее, через близость S-после-A и S’. 
 #Близость - в смысле мы нормируем все циферки и рассчитываем… Ну пусть косинусную меру.
 #Базируется на двойном sarsa - то есть предсказывает и оптимизирует значение advantage
@@ -117,7 +116,9 @@ class GoalAgent:
         std_values = np.std(s_arr,axis=1)
         std_values[std_values==0] = 1
         #косинусные меры расстояний между текущим и желаемым state
-        r = pairwise.cosine_similarity((s_arr - mean_values)/std_values,(s_g_arr - mean_values)/std_values)
+        #r = pairwise.cosine_similarity(((s_arr.T - mean_values)/std_values).T,((s_g_arr.T - mean_values)/std_values).T)
+        r = utils.cosine_similarity(((s_arr.T - mean_values)/std_values),((s_g_arr.T - mean_values)/std_values))
+        #1/0
         #какая проблема? Все координаты равнозначны. Важны только распределения - большие дельты могут выйти лишь при сильной неравномерности по одной из координат.
         #не выйдет ли так, что реально важна лишь одна (малое подмножество) координата, а мы оптимизируем все, и той одной пренебрегаем?
         return r
@@ -232,12 +233,12 @@ class GoalAgent:
         for i in range(6):
             mini_batch = np.random.randint(low=0,high=len(self.s),size=len(self.s))
             #я хочу, чтобы в батч попали награды, чтобы было, за что цепляться
-            r = self.r_disco[mini_batch,:]
+            r = self.r_disco[mini_batch]
             if np.max(r)!=np.min(r):
                 break
-        s = self.s[mini_batch,:]
-        s_g = self.s_g[mini_batch,:]
-        a = self.a[mini_batch,:]
+        s = np.array(self.s)[mini_batch,0,:]
+        s_g = np.array(self.s_g)[mini_batch,0,:]
+        a = np.array(self.a)[mini_batch,:]
         #    
         (s,s_g,a,r) = self.rebalance_data(s,s_g,a,r)
         #Это уже минибатч. Размноженный
@@ -261,7 +262,7 @@ class GoalAgent:
                 break
         r_ssr_predicted = self.model_ssr.predict(np.hstack((s,s_g)))
         #Предсказать дельту
-        delta_r = r-r_ssr_predicted
+        delta_r = r-r_ssr_predicted[:,0]
         
         for i in range(10):
             self.model_ssar.fit(np.hstack((s,s_g,a)), delta_r, batch_size=self.batch_size,
@@ -500,15 +501,20 @@ class GraphAI(StatesGraph):
         else:
             if (self.mean_std_s is None) or (np.random.rand()<self.frequency_mean_std_update):
                 #обновить цифры для нормализации
-                mean_values = np.mean(self.rl.s_arr,axis=1)
-                std_values = np.std(self.rl.s_arr,axis=1)
+                s_arr = np.array(self.rl.s)[:,0,:]
+                mean_values = np.mean(s_arr,axis=1)
+                std_values = np.std(s_arr,axis=1)
                 std_values[std_values==0] = 1
                 self.mean_std_s = [mean_values,std_values]
                 
             #назначить текущую goal
             #если цели ещё нет
             #или если скорость приближения мала, но не слишком сразу после назначения
-            end_id_distance = np.where(self.goal_changed)[0][-1]
+            end_id_distance_lst = np.where(self.goal_changed)[0]
+            if len(end_id_distance_lst)!=0:
+                end_id_distance = end_id_distance_lst[-1]
+            else:
+                end_id_distance = 0
             #сколько мы достигали этой цели
             try_time_fact = len(self.goal_changed) - end_id_distance 
             len_window_distance = min(try_time_fact,self.window_speed_measure)
