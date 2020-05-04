@@ -13,6 +13,6 @@ def exp_smooth(data,alpha,steps,dones=None):
 def cosine_similarity(X,Y):
     #X,Y - матрицы. axis 0 - это номер вектора, axis 1 - координаты вектора
     prod_mx = X*Y
-    X_modules = np.sqrt(np.sum(X**2,axis=0))
-    Y_modules = np.sqrt(np.sum(Y**2,axis=0))
-    return np.sum(prod_mx / (X_modules*Y_modules) ,axis=0)
+    X_modules = np.sqrt(np.sum(X**2,axis=1))
+    Y_modules = np.sqrt(np.sum(Y**2,axis=1))
+    return np.sum(prod_mx / np.array(X_modules*Y_modules,ndmin=2).T,axis=1)

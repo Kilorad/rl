@@ -1,6 +1,7 @@
 import sys
 import pylab
 import random
+import re
 import numpy as np
 from collections import deque
 from sklearn.metrics import pairwise
@@ -18,6 +19,33 @@ import utils
 #RL вида (S,S’,A)->R. А R как рассчитывать? По идее, через близость S-после-A и S’. 
 #Близость - в смысле мы нормируем все циферки и рассчитываем… Ну пусть косинусную меру.
 #Базируется на двойном sarsa - то есть предсказывает и оптимизирует значение advantage
+
+def str_to_array(string):
+    numeric_const_pattern = r"""
+        [-+]? # optional sign
+        (?:
+            (?: \d* \. \d+ ) # .1 .12 .123 etc 9.1 etc 98.1 etc
+            |
+            (?: \d+ \.? ) # 1. 12. 123. etc 1 12 123 etc
+        )
+        # followed by optional exponent part if desired
+        (?: [Ee] [+-]? \d+ ) ?
+        """
+    rx = re.compile(numeric_const_pattern, re.VERBOSE)
+    #string like this '[1,2,  3]' to array like this [1,2,3]
+    #lst = re.findall('\d+\.\d+',string[1])
+    lst = rx.findall(string)
+    #распарсить из графа
+    lst = np.array([float(l) for l in lst])
+    return lst 
+
+def arr_str_to_array(lst):
+    lst = [str_to_array(string) for string in lst]
+    return np.array(lst)
+
+def arr_to_str(lst):
+    return str(lst).replace(' ',',').replace(',,',',').replace(',,',',').replace('\n','').replace('[','').replace(']','')
+        
 class GoalAgent:
     def __init__(self, state_size, action_size, layers_size=[100,100]):
         self.render = False
@@ -102,7 +130,7 @@ class GoalAgent:
     def append_sample(self, state, state_goal, action, reward, next_state, done):
         a_one_hot = np.zeros(self.action_size)
         a_one_hot[action]=1
-        sar_curr = np.concatenate((state[0,:],a_one_hot,[reward],[done]))
+        sar_curr = np.concatenate((state,a_one_hot,[reward],[done]))
         self.s.append(state)
         self.s_g.append(state_goal)
         self.a.append(a_one_hot)
@@ -125,8 +153,8 @@ class GoalAgent:
     
     #по смыслу эти награды - расстояния от целевого state до текущего.
     def make_discounted_rewards(self):
-        s_arr = np.array(self.s)[:,0,:]
-        s_g_arr = np.array(self.s_g)[:,0,:]
+        s_arr = np.array(self.s)
+        s_g_arr = np.array(self.s_g)
         self.r = self.make_cos_distances(s_arr,s_g_arr)
         
         idx_borders = np.array(self.done)
@@ -134,6 +162,8 @@ class GoalAgent:
         idx_goal_changed = np.any((s_g_arr - np.roll(s_g_arr,1))!=0,axis=1) 
         #цель сменилась. Типа такого: 00001111, и мы выбираем первую единичку
         idx_borders = idx_borders | idx_goal_changed
+        print('self.r',len(self.r))
+        print('idx_borders',len(idx_borders),idx_borders)
         self.r_disco = utils.exp_smooth(self.r,self.discount_factor,self.planning_horison,idx_borders)
 
         
@@ -236,8 +266,8 @@ class GoalAgent:
             r = self.r_disco[mini_batch]
             if np.max(r)!=np.min(r):
                 break
-        s = np.array(self.s)[mini_batch,0,:]
-        s_g = np.array(self.s_g)[mini_batch,0,:]
+        s = np.array(self.s)[mini_batch,:]
+        s_g = np.array(self.s_g)[mini_batch,:]
         a = np.array(self.a)[mini_batch,:]
         #    
         (s,s_g,a,r) = self.rebalance_data(s,s_g,a,r)
@@ -326,8 +356,8 @@ class DistanceMeasure:
         idx_end = idx_end[done_sums==0]
         idx_len = idx_len[done_sums==0]
         
-        s1 = s[idx_start,0,:]
-        s2 = s[idx_end,0,:]
+        s1 = s[idx_start,:]
+        s2 = s[idx_end,:]
         self.model.fit(np.hstack((s1,s2)),idx_len, batch_size=400,
                            epochs=epochs*10, verbose=verbose)
         
@@ -351,7 +381,7 @@ class StatesGraph:
         l = len(state_list)
         idx = random.sample(range(l), min(int(l*max_points_part),max_points_abs))
         state_list_sparce = [state_list[i] for i in idx]
-        self.add_node_list(state_list,filtration_min_rel=filtration_min_rel,filtration_min_abs=filtration_min_abs)
+        self.add_node_list(state_list_sparce,filtration_min_rel=filtration_min_rel,filtration_min_abs=filtration_min_abs)
         
     def add_node_list(self,state_list,filtration_min_rel=0.05,filtration_min_abs=5):
         #Опасно! Может повесить комп!
@@ -360,30 +390,49 @@ class StatesGraph:
             filtration_min_rel = 0.05
         #ноды должны быть hashable. А значит - ну пусть string
         old_nodes = list(self.graph.nodes)
+        old_nodes = arr_str_to_array(old_nodes)
+        if (len(state_list) > 0) and (type(state_list[0])==type('ab')):
+            state_list = arr_str_to_array(state_list)
+        if (len(old_nodes) > 0) and (type(old_nodes[0])==type('ab')):
+            #old_nodes - строки. Надо распотрошить в arrays
+            old_nodes = arr_str_to_array(old_nodes)
         #затем пробежаться по всем новым state и всем старым и создать пары старый-новый
         edges_coord = list(itertools.product(old_nodes, state_list)) + list(itertools.product(state_list, old_nodes)) + list(itertools.product(state_list, state_list))
         edges_coord_np = np.array(edges_coord)
-        #print('edges_coord_np ',edges_coord_np.shape )#,edges_coord_np
-        edges_values = self.dist_meas.predict(edges_coord_np[:,0,0,:],edges_coord_np[:,1,0,:])
+        try:
+            print('state_list', np.array(state_list).shape)
+        except Exception:
+            pass
+        try:
+            print('old_nodes', np.array(old_nodes).shape)
+        except Exception:
+            pass
+        edges_values = self.dist_meas.predict(edges_coord_np[:,0,:],edges_coord_np[:,1,:])
         idx = (edges_values>filtration_min_abs) & (edges_values>np.percentile(edges_values,filtration_min_rel*100))
         idx = idx.ravel()
         idx = np.where(idx)[0]
+        print('add2node state_list',state_list)
         for i in idx:
-            self.graph.add_edge(str(edges_coord[i][0]),str(edges_coord[i][1]),length=edges_values[i])
+            print('str(edges_coord[i][0])',arr_to_str(edges_coord[i][0]))
+            self.graph.add_node(arr_to_str(edges_coord[i][0]))
+            self.graph.add_node(arr_to_str(edges_coord[i][1]))
+            self.graph.add_edge(arr_to_str(edges_coord[i][0]),arr_to_str(edges_coord[i][1]),length=edges_values[i])
     def rewrite_edges(self,filtration_min_rel=0.05,filtration_min_abs=5):
         #обновить веса рёбер и дропнуть короткие рёбра
         #filtration_min - минимальное расстояние, относительное и абсолютное
         nodes = list(self.graph.nodes)
+        nodes = arr_str_to_array(nodes)
         edges_coord = itertools.product(nodes, nodes)
         edges_coord_np = np.array(edges_coord)
-        #print('edges_coord_np ',edges_coord_np.shape )#,edges_coord_np
-        edges_values = self.dist_meas.predict(edges_coord_np[:,0,0,:],edges_coord_np[:,1,0,:])
+        edges_values = self.dist_meas.predict(edges_coord_np[:,0,:],edges_coord_np[:,1,:])
         
         idx = np.where(edges_values>filtration_min_abs) & (edges_values>np.percentile(edges_values,filtration_min_rel*100))
         #очистить граф
         self.graph = nx.DiGraph()
         for i in idx:
-            self.graph.add_edge(str(edges_coord[i][0]),str(edges_coord[i][1]),length=edges_values[i])
+            self.graph.add_node(arr_to_str(edges_coord[i][0]))
+            self.graph.add_node(arr_to_str(edges_coord[i][1]))
+            self.graph.add_edge(arr_to_str(edges_coord[i][0]),arr_to_str(edges_coord[i][1]),length=edges_values[i])
     
     def add_goal_states(self,state_list,filtration_min_rel=0.05,filtration_min_abs=5):
         #добавить целевые состояния
@@ -391,38 +440,42 @@ class StatesGraph:
         self.add_node_list(self,state_list,filtration_min_rel=0.05,filtration_min_abs=5)
     
     def add_cur_state(self,state):
-        self.cur_state = str(state)
+        self.cur_state = arr_to_str(state)
         
     def make_route(self,s1,s2):
-        s1 = str(s1)
-        s2 = str(s2)
+        s1 = arr_to_str(s1)
+        s2 = arr_to_str(s2)
         if not (s1 in self.graph.nodes):
             self.add_node_list([s1],filtration_min_rel=0.05,filtration_min_abs=5)
         if not (s2 in self.graph.nodes):
             self.add_node_list([s2],filtration_min_rel=0.05,filtration_min_abs=5)
             
-        path = nx.algorithms.shortest_path.generic.shortest_path(self.graph,s1,s2,weight='length')
+        path = nx.algorithms.shortest_path(self.graph,s1,s2,weight='length')
         #есть ещё nx.algorithms.all_shortest_paths - оно будет нужно, если мы захотим как-то фильтровать маршруты
         return path
     
     def make_route_to_all_states(self,s1,s2_list):
         #посчитать пути ко всем целям
-        s1 = str(s1)
+        s1 = arr_to_str(np.ravel(np.array(s1)))
         if not (s1 in self.graph.nodes):
             self.add_node_list([s1],filtration_min_rel=0.05,filtration_min_abs=5)
         path_list = []
         path_length_list = []
         for s2 in s2_list:
-            s2 = str(s2)
+            s2 = arr_to_str(s2)
             if not (s2 in self.graph.nodes):
                 self.add_node_list([s2],filtration_min_rel=0.05,filtration_min_abs=5)
-            path = nx.algorithms.shortest_path.generic.shortest_path(self.graph,s1,s2,weight='length')
+            print('s1',s1)
+            print('s1 in graph', np.isin(s1,self.graph.nodes))
+            print('s2',s2)
+            print('s2 in graph', np.isin(s2,self.graph.nodes))
+            path = nx.algorithms.shortest_path(self.graph,s1,s2,weight='length')
             
             #здесь можно провести какую-нибудь хитрую проверку 
             #на предмет "а не проходит ли граф через какое-то совсем плохое состояние"
             #
             #Дальше рассчитываем длины маршрутов
-            path_length = nx.algorithms.shortest_path.generic.shortest_path_length(self.graph,s1,s2,weight='length')
+            path_length = nx.algorithms.shortest_path_length(self.graph,s1,s2,weight='length')
             path_list.append(path)
             path_length_list.append(path_length)
         argmin = np.argmin(np.array(path_length_list)) #кратчайший маршрут
@@ -488,24 +541,10 @@ class GraphAI(StatesGraph):
     def get_action(self, state, verbose=0):
         #Использовать rl
         goal_changed = False
-        self.write_goal = self.current_goal
+        
         if len(self.rl.s)<self.rl.train_start:
-            #задать рандомную цель, чтобы что-то логировалось, и хоть как-то измерялись расстояния
-            if (self.write_goal is None) or (np.random.rand()<0.07):
-                idx = int(np.random.rand()*(len(self.rl.s)-1))
-                if idx>0:
-                    self.write_goal=self.rl.s[idx]
-                else:
-                    self.write_goal=state
-            return random.randrange(self.action_size)
+            action = random.randrange(self.action_size)
         else:
-            if (self.mean_std_s is None) or (np.random.rand()<self.frequency_mean_std_update):
-                #обновить цифры для нормализации
-                s_arr = np.array(self.rl.s)[:,0,:]
-                mean_values = np.mean(s_arr,axis=1)
-                std_values = np.std(s_arr,axis=1)
-                std_values[std_values==0] = 1
-                self.mean_std_s = [mean_values,std_values]
                 
             #назначить текущую goal
             #если цели ещё нет
@@ -518,31 +557,61 @@ class GraphAI(StatesGraph):
             #сколько мы достигали этой цели
             try_time_fact = len(self.goal_changed) - end_id_distance 
             len_window_distance = min(try_time_fact,self.window_speed_measure)
+            print(len(self.cos_distance))
+            print(self.cos_distance[-1])
+            print(-len_window_distance)
+            print(self.cos_distance[-len_window_distance])
             speed_closing_cos_dist = (self.cos_distance[-1]+self.cos_distance[-2]) - (self.cos_distance[-len_window_distance]+self.cos_distance[-len_window_distance+1])
-            
             #speed_closing_cos_dist - если положительное, то мы сближаемся, если отрицательное, то отдаляемся
+            print('try_time_fact', try_time_fact)
+            print('self.min_try_time', self.min_try_time)
+            print('speed_closing_cos_dist',speed_closing_cos_dist)
+            print('self.quantile_edge_min',self.quantile_edge_min)
+            print('self.current_goal',self.current_goal)
+            print('self.current_goal is None',self.current_goal is None)
             if (self.current_goal is None) or ((speed_closing_cos_dist<self.quantile_edge_min) and (try_time_fact>self.min_try_time)):
-                route = self.make_route_to_all_states(self,state,self.goal_state_list)
-                
-                lst = re.findall('\d+\.\d+',route[1])
+                route = self.make_route_to_all_states(state,self.goal_state_list)
                 #распарсить из графа
-                lst = np.array([float(l) for l in lst])
+                lst = str_to_array(route[1])
                 print('state:',state,'route:',route,'lst:',lst)
                 self.current_goal = lst
-                
                 goal_changed = True
+
+            action = self.rl.get_action(state,self.current_goal)
+        
+        if (self.mean_std_s is None) or (np.random.rand()<self.frequency_mean_std_update):
+            if len(self.rl.s)>3:
+                #обновить цифры для нормализации
+                s_arr = np.array(self.rl.s)
+                mean_values = np.mean(s_arr,axis=0)
+                std_values = np.std(s_arr,axis=0)
+                std_values[std_values==0] = 1
+                self.mean_std_s = [mean_values,std_values]
                 
-            self.rl.get_action(state,self.current_goal)
-            
-            cos_dist = pairwise.cosine_similarity((state - self.mean_std_s[0])/self.mean_std_s[1],(self.current_goal - self.mean_std_s[0])/self.mean_std_s[1])
-            self.cos_distance.append(cos_dist)
-            self.goal_changed.append(goal_changed)
+        if (len(self.rl.s)>3) and (not (self.current_goal is None)):
+            print('state',state,'self.mean_std_s',self.mean_std_s,'self.current_goal',self.current_goal)
+            cos_dist = utils.cosine_similarity((state - self.mean_std_s[0])/self.mean_std_s[1],(self.current_goal - self.mean_std_s[0])/self.mean_std_s[1])
+        else:
+            cos_dist = 1
+        self.cos_distance.append(cos_dist)
+        self.goal_changed.append(goal_changed)
+        
+        
+        return action
             
     # save sample <s,s_g,a,r,s'> to the replay memory of rl
     #у графа даже своей replay-памяти нет - а нафиг дублирование (можно сделать, если это будет важно)
     def append_sample(self, state, action, reward, next_state, done):
-          
-        self.rl.append_sample(state, self.write_goal, action, reward, next_state, done)
+        self.write_goal = self.current_goal
+        #задать рандомную цель, чтобы что-то логировалось, и хоть как-то измерялись расстояния
+        if (self.write_goal is None):
+            idx = int(np.random.rand()*(len(self.rl.s)-1))
+            if idx>0:
+                self.write_goal=self.rl.s[idx]
+            else:
+                self.write_goal=state
+                    
+        self.rl.append_sample(state.ravel(), self.write_goal.ravel(), action, reward, next_state, done)
         self.reward.append(reward)
         
         
@@ -568,6 +637,7 @@ class GraphAI(StatesGraph):
             idx = np.array(self.reward)>quantile
             idx_num = np.where(idx)[0]
             #это те точки, что надо добавить
+            print('len(self.rl.s)', len(self.rl.s), 'idx_num',idx_num, 'np.array(self.reward).minmax',np.array(self.reward).min(), np.array(self.reward).max())
             state_list = [self.rl.s[i] for i in idx_num]
             self.add_node_list_safety(state_list,self.max_points_abs_episode, 1,filtration_min_rel,filtration_min_abs)
             self.goal_state_list.extend(state_list)
