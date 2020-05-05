@@ -44,7 +44,7 @@ def arr_str_to_array(lst):
     return np.array(lst)
 
 def arr_to_str(lst):
-    return str(lst).replace(' ',',').replace(',,',',').replace(',,',',').replace('\n','').replace('[','').replace(']','')
+    return str(lst).replace(' ',',').replace(',,',',').replace(',,',',').replace(',,',',').replace(',,',',').replace(',,',',').replace('\n','').replace('[','').replace(']','')
         
 class GoalAgent:
     def __init__(self, state_size, action_size, layers_size=[100,100]):
@@ -68,6 +68,7 @@ class GoalAgent:
         # create replay memory using deque
         deque_len = 10000
         self.s = deque(maxlen=deque_len)
+        #self.r - это self.make_cos_distances(s_arr,s_g_arr)
         #целевые состояния:
         self.s_g = deque(maxlen=deque_len)
         #действия в формате one_hot:
@@ -130,7 +131,6 @@ class GoalAgent:
     def append_sample(self, state, state_goal, action, reward, next_state, done):
         a_one_hot = np.zeros(self.action_size)
         a_one_hot[action]=1
-        sar_curr = np.concatenate((state,a_one_hot,[reward],[done]))
         self.s.append(state)
         self.s_g.append(state_goal)
         self.a.append(a_one_hot)
@@ -155,15 +155,13 @@ class GoalAgent:
     def make_discounted_rewards(self):
         s_arr = np.array(self.s)
         s_g_arr = np.array(self.s_g)
-        self.r = self.make_cos_distances(s_arr,s_g_arr)
+        self.r = self.make_cos_distances(s_arr.T,s_g_arr.T)
         
         idx_borders = np.array(self.done)
         #borders - границы между эпизодами и между инструментальными целями
         idx_goal_changed = np.any((s_g_arr - np.roll(s_g_arr,1))!=0,axis=1) 
         #цель сменилась. Типа такого: 00001111, и мы выбираем первую единичку
         idx_borders = idx_borders | idx_goal_changed
-        print('self.r',len(self.r))
-        print('idx_borders',len(idx_borders),idx_borders)
         self.r_disco = utils.exp_smooth(self.r,self.discount_factor,self.planning_horison,idx_borders)
 
         
@@ -364,6 +362,7 @@ class DistanceMeasure:
     def predict(self,s1,s2,epochs=1,verbose=0):
         #сразу адаптируем под вектора
         pred = self.model.predict(np.hstack((s1,s2)))
+        pred[pred<0] = 0
         return pred
 
 #Cборщик графов. Он берёт n рандомных состояний и рассчитывает расстояние (направленное!) между каждыми двумя. Есть опция “добавить вершину” (с расчётом всех рёбер) и “удалить вершину”. А так же пересчитать рёбра. Текущий state добавляется, целевые state должны быть добавлены изначально.
@@ -373,9 +372,12 @@ class StatesGraph:
         self.dist_meas = DistanceMeasure(state_size)
         self.goal_states = []
         self.current_goal = None
+        self.edges = set()
+        self.nodes = set()
     def fit_dist_measure(self,s,done,epochs=1,verbose=0):
         self.dist_meas.fit(s,done,epochs,verbose)
-    def add_node_list_safety(self,state_list,max_points_abs=500, max_points_part=0.2,filtration_min_rel=0.05,filtration_min_abs=5):
+    #def add_node_list_safety(self,state_list,max_points_abs=500, max_points_part=0.2,filtration_min_rel=0.05,filtration_min_abs=5):
+    def add_node_list_safety(self,state_list,max_points_abs=1e10, max_points_part=1,filtration_min_rel=0,filtration_min_abs=0):
         #зарядить сюда все вершины. Единственно безопасный вариант!
         #max_points - сколько максимум вершин добавляем из выборки (абсолютное и относительное значение)
         l = len(state_list)
@@ -399,24 +401,25 @@ class StatesGraph:
         #затем пробежаться по всем новым state и всем старым и создать пары старый-новый
         edges_coord = list(itertools.product(old_nodes, state_list)) + list(itertools.product(state_list, old_nodes)) + list(itertools.product(state_list, state_list))
         edges_coord_np = np.array(edges_coord)
-        try:
-            print('state_list', np.array(state_list).shape)
-        except Exception:
-            pass
-        try:
-            print('old_nodes', np.array(old_nodes).shape)
-        except Exception:
-            pass
+        #try:
+        #    print('state_list', np.array(state_list).shape)
+        #except Exception:
+        #    pass
+        #try:
+        #    print('old_nodes', np.array(old_nodes).shape)
+        #except Exception:
+        #    pass
         edges_values = self.dist_meas.predict(edges_coord_np[:,0,:],edges_coord_np[:,1,:])
         idx = (edges_values>filtration_min_abs) & (edges_values>np.percentile(edges_values,filtration_min_rel*100))
-        idx = idx.ravel()
         idx = np.where(idx)[0]
-        print('add2node state_list',state_list)
+        #print('add2node state_list',state_list)
         for i in idx:
-            print('str(edges_coord[i][0])',arr_to_str(edges_coord[i][0]))
+            #print('str(edges_coord[i][0])',arr_to_str(edges_coord[i][0]))
+            #print('str(edges_coord[i][1])',arr_to_str(edges_coord[i][1]))
             self.graph.add_node(arr_to_str(edges_coord[i][0]))
             self.graph.add_node(arr_to_str(edges_coord[i][1]))
-            self.graph.add_edge(arr_to_str(edges_coord[i][0]),arr_to_str(edges_coord[i][1]),length=edges_values[i])
+            self.graph.add_edge(arr_to_str(edges_coord[i][0]),arr_to_str(edges_coord[i][1]),length=edges_values[i][0])
+            #print('self.graph.nodes', self.graph.nodes)
     def rewrite_edges(self,filtration_min_rel=0.05,filtration_min_abs=5):
         #обновить веса рёбер и дропнуть короткие рёбра
         #filtration_min - минимальное расстояние, относительное и абсолютное
@@ -426,50 +429,76 @@ class StatesGraph:
         edges_coord_np = np.array(edges_coord)
         edges_values = self.dist_meas.predict(edges_coord_np[:,0,:],edges_coord_np[:,1,:])
         
-        idx = np.where(edges_values>filtration_min_abs) & (edges_values>np.percentile(edges_values,filtration_min_rel*100))
+        idx = (edges_values>filtration_min_abs) & (edges_values>np.percentile(edges_values,filtration_min_rel*100))
         #очистить граф
         self.graph = nx.DiGraph()
-        for i in idx:
+        for i in np.where(idx)[0]:
             self.graph.add_node(arr_to_str(edges_coord[i][0]))
             self.graph.add_node(arr_to_str(edges_coord[i][1]))
-            self.graph.add_edge(arr_to_str(edges_coord[i][0]),arr_to_str(edges_coord[i][1]),length=edges_values[i])
+            self.graph.add_edge(arr_to_str(edges_coord[i][0]),arr_to_str(edges_coord[i][1]),length=edges_values[i][0])
     
     def add_goal_states(self,state_list,filtration_min_rel=0.05,filtration_min_abs=5):
         #добавить целевые состояния
         self.goal_states.append(state_list)
-        self.add_node_list(self,state_list,filtration_min_rel=0.05,filtration_min_abs=5)
+        self.add_node_list(self,state_list,filtration_min_rel=filtration_min_rel,filtration_min_abs=filtration_min_abs)
     
     def add_cur_state(self,state):
         self.cur_state = arr_to_str(state)
         
     def make_route(self,s1,s2):
+        s1_num = s1
+        s2_num = s2
         s1 = arr_to_str(s1)
         s2 = arr_to_str(s2)
         if not (s1 in self.graph.nodes):
-            self.add_node_list([s1],filtration_min_rel=0.05,filtration_min_abs=5)
+            self.add_node_list([s1],filtration_min_rel=0.05,filtration_min_abs=4)
         if not (s2 in self.graph.nodes):
-            self.add_node_list([s2],filtration_min_rel=0.05,filtration_min_abs=5)
+            self.add_node_list([s2],filtration_min_rel=0.05,filtration_min_abs=4)
             
-        path = nx.algorithms.shortest_path(self.graph,s1,s2,weight='length')
+        try:
+            path = nx.algorithms.shortest_path(self.graph,s1,s2,weight='length')
+        except Exception:
+            #по какой-то непонятной причине у нас эти 2 точки не связаны никак. 
+            #Ок, делаем edge напрямую из одной точки в другую
+            self.graph.add_node(arr_to_str(s1))
+            self.graph.add_node(arr_to_str(s2))
+            self.graph.add_edge(arr_to_str(s1),arr_to_str(s2),
+                                length=self.dist_meas.predict(np.array(s1_num,ndmin=2),np.array(s2_num,ndmin=2) ))
+            path = nx.algorithms.shortest_path(self.graph,s1,s2,weight='length')
+            
         #есть ещё nx.algorithms.all_shortest_paths - оно будет нужно, если мы захотим как-то фильтровать маршруты
         return path
     
     def make_route_to_all_states(self,s1,s2_list):
         #посчитать пути ко всем целям
+        s1_num = s1
         s1 = arr_to_str(np.ravel(np.array(s1)))
         if not (s1 in self.graph.nodes):
-            self.add_node_list([s1],filtration_min_rel=0.05,filtration_min_abs=5)
+            self.add_node_list([s1],filtration_min_rel=0.05,filtration_min_abs=4)
         path_list = []
         path_length_list = []
         for s2 in s2_list:
+            s2_num = s2
             s2 = arr_to_str(s2)
+            if not (s1 in self.graph.nodes):
+                self.add_node_list([s1],filtration_min_rel=0.05,filtration_min_abs=4)
             if not (s2 in self.graph.nodes):
-                self.add_node_list([s2],filtration_min_rel=0.05,filtration_min_abs=5)
-            print('s1',s1)
-            print('s1 in graph', np.isin(s1,self.graph.nodes))
-            print('s2',s2)
-            print('s2 in graph', np.isin(s2,self.graph.nodes))
-            path = nx.algorithms.shortest_path(self.graph,s1,s2,weight='length')
+                self.add_node_list([s2],filtration_min_rel=0.05,filtration_min_abs=4)
+            #print('s1',s1)
+            #print('s1 in graph', np.isin(s1,self.graph.nodes))
+            #print('s2',s2)
+            #print('s2 in graph', np.isin(s2,self.graph.nodes))
+            try:
+                path = nx.algorithms.shortest_path(self.graph,s1,s2,weight='length')
+            except Exception:
+                #по какой-то непонятной причине у нас эти 2 точки не связаны никак. 
+                #Ок, делаем edge напрямую из одной точки в другую
+                self.graph.add_node(arr_to_str(s1))
+                self.graph.add_node(arr_to_str(s2))
+                self.graph.add_edge(arr_to_str(s1),arr_to_str(s2),
+                                    length=self.dist_meas.predict(np.array(s1_num,ndmin=2),np.array(s2_num,ndmin=2) ))
+                path = nx.algorithms.shortest_path(self.graph,s1,s2,weight='length')
+                
             
             #здесь можно провести какую-нибудь хитрую проверку 
             #на предмет "а не проходит ли граф через какое-то совсем плохое состояние"
@@ -634,12 +663,17 @@ class GraphAI(StatesGraph):
             #нет целевых состояний
             #добавить reward-ы в качестве целевых точек.
             quantile = np.percentile(np.array(self.reward),self.auto_aiming_reward_quantile*100)
+            if np.std(self.reward)==0:
+                reward_arr = self.reward + np.random.rand(self.reward.shape)
+            else:
+                reward_arr = self.reward
             idx = np.array(self.reward)>quantile
             idx_num = np.where(idx)[0]
             #это те точки, что надо добавить
             print('len(self.rl.s)', len(self.rl.s), 'idx_num',idx_num, 'np.array(self.reward).minmax',np.array(self.reward).min(), np.array(self.reward).max())
             state_list = [self.rl.s[i] for i in idx_num]
-            self.add_node_list_safety(state_list,self.max_points_abs_episode, 1,filtration_min_rel,filtration_min_abs)
+            #self.add_node_list_safety(state_list,self.max_points_abs_episode, 1,filtration_min_rel,filtration_min_abs)
+            self.add_node_list_safety(state_list)
             self.goal_state_list.extend(state_list)
         if np.random.rand()<self.drop_goals_by_reward:
             #пересмотр верхнеуровневых целей. Отбросить те, где реворд мелкий.
@@ -652,8 +686,9 @@ class GraphAI(StatesGraph):
             self.goal_state_list = goal_state_list_new
 
         #добавить новые точки в граф
-        if np.random.rand()<self.p_add_points_turn:
-            self.add_node_list_safety(self.rl.s,max_points_abs, max_points_part,filtration_min_rel,filtration_min_abs)
+        if (np.random.rand()<self.p_add_points_turn) or (self.graph.number_of_nodes()):
+            #self.add_node_list_safety(self.rl.s,max_points_abs, max_points_part,filtration_min_rel,filtration_min_abs)
+            self.add_node_list_safety(self.rl.s)
         #обучить rl
         self.rl.train_model(epochs,sub_batch_size,verbose)
         
@@ -666,7 +701,8 @@ class GraphAI(StatesGraph):
         idx_num = np.where(idx)[0]
         #это те точки, что надо добавить
         state_list = [self.rl.s[i] for i in idx_num]
-        self.add_node_list_safety(state_list,self.max_points_abs_episode, 1,self.quantile_edge_min,self.min_edge)
+        #self.add_node_list_safety(state_list,self.max_points_abs_episode, 1,self.quantile_edge_min,self.min_edge)
+        self.add_node_list_safety(state_list)
         self.goal_state_list.extend(state_list)
         #
         self.train_model(epochs=30,sub_batch_size=6000,verbose=0,
