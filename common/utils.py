@@ -8,6 +8,8 @@ def exp_smooth(data,alpha,steps,dones=None):
         if not (dones is None):
             roll[np.where(dones)[0]]=0
         data_to_mod=data_to_mod+roll*(alpha**i)
+    #попытка масштабирования: нормировка
+    #data_to_mod = data_to_mod/len(data_to_mod)    
     return(data_to_mod)
 
 def cosine_similarity(X,Y):

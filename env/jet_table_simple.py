@@ -1,5 +1,5 @@
 """
-Jet table environment. Ice and table with 4 engines and 4 mini-locators. Obstacles on ice
+Jet table simple environment. Ice (rough) and table with 4 engines and 4 mini-locators. Obstacles on ice
 """
 import math
 import gym
@@ -8,25 +8,23 @@ from gym.utils import seeding
 import numpy as np
 
 
-class jet_table_env(gym.Env):
+class jet_table_simple_env(gym.Env):
     """
     Description:
         
     Source:
         
     Observation: 
-        Type: Box(10)
+        Type: Box(8)
         Num	Observation                 
-        0	tm             
-        1	vx             
-        2	vy                 
-        3	tx_rel     
-        4	ty_rel   
-        5	left_r
-        6	right_r
-        7	up_r
-        8	down_r
-        9	reward   
+        0	tm                            
+        1	tx_rel     
+        2	ty_rel   
+        3	left_r
+        4	right_r
+        5	up_r
+        6	down_r
+        7	reward   
     Actions:
         Type: Discrete(4)
         Num	Action
@@ -50,8 +48,6 @@ class jet_table_env(gym.Env):
     def __init__(self):
         high = np.array([
             300,
-            1,
-            1,
             5,
             5,
             1,
@@ -64,7 +60,6 @@ class jet_table_env(gym.Env):
         self.action_space = spaces.Discrete(4)
         self.observation_space = spaces.Box(-high, high, dtype=np.float32)
 
-        self.seed(1)
         self.viewer = None
         self.state = None
         
@@ -72,19 +67,19 @@ class jet_table_env(gym.Env):
         self.steps_beyond_done = None
         ########
 
-        self.k_fr = 0.05
-        self.dv = 0.05
+        self.k_fr = 0.8
+        self.dv = 0.4
         self.t = 0
 
         self.make_map()
         
     def make_map(self):
-        self.seed(3)
-        self.table = {'x':18.,'y':18.,'vx':0.,'vy':0.}
-        self.target = {'x':1.,'y':1.}
+        self.seed(1)
+        self.table = {'x':16.,'y':16.,'vx':0.,'vy':0.}
+        self.target = {'x':2.,'y':2.}
         self.obstacle_map = np.ones((21,21))
         self.obstacle_map[1:self.obstacle_map.shape[0]-1,1:self.obstacle_map.shape[1]-1]=0
-        for i in range(9):
+        for i in range(5):
             orientation = np.random.rand()<0.5
             start = int(np.random.rand()*(self.obstacle_map.shape[0]-2))#1я координата
             length = int(np.random.rand()*(self.obstacle_map.shape[0]-2)*0.6)
@@ -169,10 +164,8 @@ class jet_table_env(gym.Env):
         
         self.t += 1  
         self.state = (self.t,
-                      self.table['vx'],
-                      self.table['vy'],
-                      self.target['x']-self.table['x'],
-                      self.target['y']-self.table['y'],
+                      self.table['x'] - self.target['x'],
+                      self.table['y'] - self.target['y'],
                       radar['left'],
                       radar['right'],
                       radar['up'],
@@ -199,12 +192,10 @@ class jet_table_env(gym.Env):
             del self.viewer
             self.viewer = None
             
-        self.state = np.random.uniform(low=-0.5, high=0.5, size=(10,))
+        self.state = np.random.uniform(low=-0.5, high=0.5, size=(8,))
         self.steps_beyond_done = None
         ########
 
-        self.k_fr = 0.05
-        self.dv = 0.05
         self.t = 0
 
         self.make_map()
