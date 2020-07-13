@@ -255,9 +255,13 @@ class GoalAgent:
         self.train_model(epochs=30,sub_batch_size=6000,verbose=0)
         self.train_model(epochs=1,sub_batch_size=6000,verbose=1)
         
-    def test_model(self,model,X,Y):
-        mse = np.mean((model.predict(X)-Y)**2)
-        return mse
+    def test_model(self,model,X,Y,show_result=False):
+        Y_pred = model.predict(X)
+        mse = np.mean((Y_pred-Y)**2)
+        if show_result:
+            return mse, Y_pred
+        else:
+            return mse
     
     def train_model(self,epochs=4,sub_batch_size=None,verbose=0):
         if len(self.s) < self.train_start:
@@ -340,7 +344,7 @@ class GoalAgent:
             
 #Bычислитель дистанции. (S,S’)->dist. Работает по принципу: ввели 2 состояния, он посчитал число тактов между ними плюс, возможно, штрафы. Сделать метод “обновить” и метод “рассчитать”.
 class DistanceMeasure:
-    def __init__(self, state_size, layers_size=[300,300]):
+    def __init__(self, state_size, layers_size=[300,300], use_bins=False):
         # get size of state and action
         self.state_size = state_size
         self.learning_rate = 0.0001
@@ -348,12 +352,17 @@ class DistanceMeasure:
         self.layers_size = layers_size
         # максимальное теоретическое расстояние между 2 точками. В кадрах
         # если сделать слишком мелким, то не сможем понять, когда из одной точки в другую нельзя попасть
-        self.max_distance = 500 
+        self.max_distance = 200 
+        self.max_thresh = 75 #всё, что больше этого числа, заклипать
         self.pairs_count = 2000
         
         #моделька. Посчитать время между двумя точками.
         input_dim = 2*self.state_size
-        out_dim = 1
+        if use_bins:
+            self.bin_count = 10
+            out_dim = self.bin_count
+        else:
+            out_dim = 1
         model = Sequential()
         model.add(Dense(self.layers_size[0], input_dim=input_dim, activation='relu',
                         kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.0001)))
@@ -363,10 +372,18 @@ class DistanceMeasure:
                         kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.0001)))
         model.add(BatchNormalization())
         model.add(Dropout(rate=0.5))
-        model.add(Dense(out_dim, activation='linear',
-                        kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.0001)))
+        if use_bins:
+            model.add(Dense(out_dim, activation='sigmoid',
+                            kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.0001)))
+        else:
+            model.add(Dense(out_dim, activation='linear',
+                            kernel_initializer='he_uniform',kernel_regularizer=keras.regularizers.l2(0.0001)))
         model.summary()
-        model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
+        if use_bins:
+            model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
+        else:
+            model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
+        self.use_bins = use_bins
         self.model = model
         
     def fit(self,s,done,epochs=1,verbose=0):
@@ -377,7 +394,10 @@ class DistanceMeasure:
         idx_start = np.random.randint(low=0,high=len(s),size=self.pairs_count)
         #
         idx_len = np.random.randint(low=0,high=self.max_distance,size=self.pairs_count)
+        max_idx = int(2*len(idx_len)/3)
+        idx_len[0:max_idx] = np.random.randint(low=0,high=self.max_thresh,size=max_idx)#размножить короткие дистанции
         idx_end = idx_start + idx_len
+        idx_len[idx_len>=self.max_thresh] = self.max_thresh #клипаем
         idx_end[idx_end>len(s)-1] = len(s)-1
         #выкинуть ситуации, где done попало в кадр
         done_sums = np.array([sum(done[idx_start[i]:idx_end[i]]) for i in range(len(idx_start))])
@@ -389,8 +409,8 @@ class DistanceMeasure:
         s2 = s[idx_end,:]
         if verbose:
             print('(s,goal)->len fit')
-        for i in range(20):
-            self.model.fit(np.hstack((s1,s2)), idx_len, batch_size=900, epochs=epochs*20, verbose=verbose)
+        for i in range(80):
+            self.model.fit(np.hstack((s1,s2)), idx_len, batch_size=1000, epochs=epochs*20, verbose=verbose)
             dist_predict = self.model.predict(np.hstack((s1,s2)))
             mse = np.mean((dist_predict - idx_len)**2)
             mse_mean = np.sqrt(mse)/np.mean(np.abs(idx_len))
@@ -635,7 +655,7 @@ class GraphAI(StatesGraph):
         if 't_start' in globals():
             print('A0',pd.Timestamp.now()-globals()['t_start'])
         globals()['t_start'] = pd.Timestamp.now()
-        print('AA',pd.Timestamp.now()-globals()['t_start'])
+        #print('AA',pd.Timestamp.now()-globals()['t_start'])
         globals()['t_start'] = pd.Timestamp.now()
         if len(self.rl.s)<self.rl.train_start:
             action = random.randrange(self.action_size)
@@ -649,7 +669,7 @@ class GraphAI(StatesGraph):
             else:
                 end_id_distance = 0
             #сколько мы достигали этой цели
-            print('BB',pd.Timestamp.now()-globals()['t_start'])
+            #print('BB',pd.Timestamp.now()-globals()['t_start'])
             globals()['t_start'] = pd.Timestamp.now()
             try_time_fact = len(self.goal_changed) - end_id_distance 
             len_window_distance = min(try_time_fact,self.window_speed_measure)           
@@ -657,7 +677,7 @@ class GraphAI(StatesGraph):
             #speed_closing_cos_dist - если положительное, то мы сближаемся, если отрицательное, то отдаляемся
             #print('speed_closing_cos_dist',speed_closing_cos_dist,pd.Timestamp.now())
             #print('self.current_goal',self.current_goal,pd.Timestamp.now())
-            print('CC',pd.Timestamp.now()-globals()['t_start'])
+            #print('CC',pd.Timestamp.now()-globals()['t_start'])
             globals()['t_start'] = pd.Timestamp.now()
             if (self.current_goal is None) or ((speed_closing_cos_dist<self.min_window_cos_speed) and (try_time_fact>self.min_try_time)):
                 #обновить цель
@@ -668,10 +688,10 @@ class GraphAI(StatesGraph):
                 self.current_goal = lst
                 goal_changed = True
                 print('update local target. Speed_closing_cos_dist', speed_closing_cos_dist, 'try_time_fact', try_time_fact)
-            print('DD',pd.Timestamp.now()-globals()['t_start'])
+            #print('DD',pd.Timestamp.now()-globals()['t_start'])
             globals()['t_start'] = pd.Timestamp.now()
             action = self.rl.get_action(state,self.current_goal)
-            print('EE',pd.Timestamp.now()-globals()['t_start'])
+            #print('EE',pd.Timestamp.now()-globals()['t_start'])
             globals()['t_start'] = pd.Timestamp.now()
         if (self.mean_std_s is None) or (np.random.rand()<self.frequency_mean_std_update):
             if len(self.rl.s)>3:
@@ -687,7 +707,7 @@ class GraphAI(StatesGraph):
                 self.rewrite_edges()
             except Exception:
                 pass
-        print('FF',pd.Timestamp.now()-globals()['t_start'])
+        #print('FF',pd.Timestamp.now()-globals()['t_start'])
         globals()['t_start'] = pd.Timestamp.now()
         if (len(self.rl.s)>3) and (not (self.current_goal is None)):
             cos_dist = utils.cosine_similarity((state - self.mean_std_s[0])/self.mean_std_s[1],(self.current_goal - self.mean_std_s[0])/self.mean_std_s[1])
@@ -697,7 +717,7 @@ class GraphAI(StatesGraph):
             cos_dist = 1
         self.cos_distance.append(cos_dist)
         self.goal_changed.append(goal_changed)
-        print('HH',pd.Timestamp.now()-globals()['t_start'])
+        #print('HH',pd.Timestamp.now()-globals()['t_start'])
         globals()['t_start'] = pd.Timestamp.now()
         
         return action
@@ -794,3 +814,48 @@ class GraphAI(StatesGraph):
         #
         self.train_model(epochs=30,sub_batch_size=6000,verbose=0)
         self.train_model(epochs=1,sub_batch_size=6000,verbose=1)
+        
+    def debug_info(self, frames=200,pairs_count=200):
+        #SSR SSAR
+        s = np.array(self.rl.s)
+        s_g = np.array(self.rl.s_g)
+        a = np.array(self.rl.a)
+        r = np.array(self.rl.r_disco)
+        done=np.array(self.rl.done)
+        mse, y_pred = self.rl.test_model(self.rl.model_ssr,np.hstack((s,s_g)),r, show_result=True)
+        print(f'SSR model: rmse/mean:{np.sqrt(mse)/np.mean(np.abs(r))}')
+        delta_r = r - y_pred
+        mse, y_pred_boost = self.rl.test_model(self.rl.model_ssar,np.hstack((s,s_g,a)),delta_r, show_result=True)
+        
+        print(f'SSAR model: rmse/mean:{np.sqrt(mse)/np.mean(np.abs(delta_r))}')
+        if len(y_pred)<=frames:
+            frames = len(y_pred) - 1
+        plt.plot(r[-frames:])
+        plt.plot(y_pred[-frames:])
+        plt.plot(y_pred[-frames:] + y_pred_boost[-frames:])
+        plt.show()
+        
+        #DistanceMeasure
+        idx_start = np.random.randint(low=0,high=len(s),size=pairs_count)
+        #
+        idx_len = np.random.randint(low=0,high=self.dist_meas.max_distance,size=pairs_count)
+        idx_len = np.sort(idx_len)
+        idx_end = idx_start + idx_len
+        idx_end[idx_end>len(s)-1] = len(s)-1
+        #выкинуть ситуации, где done попало в кадр
+        done_sums = np.array([sum(done[idx_start[i]:idx_end[i]]) for i in range(len(idx_start))])
+        idx_start = idx_start[done_sums==0]
+        idx_end = idx_end[done_sums==0]
+        idx_len = idx_len[done_sums==0]
+        
+        s1 = s[idx_start,:]
+        s2 = s[idx_end,:]
+
+        dist_predict = self.dist_meas.model.predict(np.hstack((s1,s2)))
+        mse = np.mean((dist_predict - idx_len)**2)
+
+        print('DistanceMeasure rmse', np.sqrt(mse),'rmse/mean = ', np.sqrt(mse)/np.mean(np.abs(idx_len)), 'rmse/std = ', np.sqrt(mse)/np.std(idx_len), 'shape', len(idx_len))
+        plt.plot(idx_len)
+        plt.plot(dist_predict)
+        plt.show()
+        
