@@ -16,6 +16,7 @@ sys.path.append('./common/')
 import networkx as nx
 import itertools
 import utils
+import copy
 
 #RL вида (S,S’,A)->R. А R как рассчитывать? По идее, через близость S-после-A и S’. 
 #Близость - в смысле мы нормируем все циферки и рассчитываем… Ну пусть косинусную меру.
@@ -45,7 +46,22 @@ def arr_str_to_array(lst):
     return np.array(lst)
 
 def arr_to_str(lst):
-    return str(lst).replace(' ',',').replace(',,',',').replace(',,',',').replace(',,',',').replace(',,',',').replace(',,',',').replace('\n','').replace('[','').replace(']','')
+    if type(lst)==type('abc'):
+        return lst
+    try:
+        lst_new = [lst[i] for i in range(len(lst))]
+        #for i in range(len(lst)):
+        #    lst[i] += 0.
+        #    lst[i] = str(lst[i])
+        #    if (lst[i][-2:]=='.0') and (len(lst[i])>2):
+        #        lst[i] = lst[i][:-2]
+    except Exception:
+        pass
+    #for i in range(len(lst)):
+    #    lst[i] += 0.
+    s_lst = str(lst_new)
+    s_lst = s_lst.replace('.0 ', '.').replace('.0]', '.]')
+    return s_lst.replace(' ',',').replace(',,',',').replace(',,',',').replace(',,',',').replace(',,',',').replace(',,',',').replace('\n','').replace('[','').replace(']','')
         
 class GoalAgent:
     def __init__(self, state_size, action_size, layers_size=[300,300],deque_len=2000):
@@ -55,10 +71,11 @@ class GoalAgent:
         self.action_size = action_size
 
         # hyper parameters for the Double SARSA
-        self.discount_factor = 0.96 #0.96**15 ~ 0.54
+        self.discount_factor = 0.98 #0.98**15 ~ 0.75
         self.learning_rate = 0.0001
-        self.epsilon = 1.0
-        self.epsilon_decay = 0.999
+        self.epsilon = 0.6
+        self.epsilon_decay = 0.996
+        #0.6*0.996^1000 = 0.01, то есть за 1000 тактов перестанем рандомить
         self.epsilon_min = 0.01
         self.batch_size = 3000
         self.sub_batch_size=1000
@@ -352,9 +369,15 @@ class DistanceMeasure:
         self.layers_size = layers_size
         # максимальное теоретическое расстояние между 2 точками. В кадрах
         # если сделать слишком мелким, то не сможем понять, когда из одной точки в другую нельзя попасть
-        self.max_distance = 200 
-        self.max_thresh = 75 #всё, что больше этого числа, заклипать
+        self.max_distance = 400 
+        self.max_thresh = 200 #всё, что больше этого числа, заклипать
         self.pairs_count = 2000
+        #штраф за длину ребра. Идеальный маршрут - из коротких рёбер (пусть их и много), 
+        #так что мы к длинам рёбер добавляем квадрат длины, умноженный на коэффициент
+        #400 + k*400^2 = 400 + k*160000
+        #чтобы 3 по 200 перевесило 1 по 400, надо, чтобы 400 + k*160000 = 3*(200 + k*40000), 
+        #то есть k=0.005
+        self.length_penalty_coef = 0.5
         
         #моделька. Посчитать время между двумя точками.
         input_dim = 2*self.state_size
@@ -409,7 +432,7 @@ class DistanceMeasure:
         s2 = s[idx_end,:]
         if verbose:
             print('(s,goal)->len fit')
-        for i in range(80):
+        for i in range(40):
             self.model.fit(np.hstack((s1,s2)), idx_len, batch_size=1000, epochs=epochs*20, verbose=verbose)
             dist_predict = self.model.predict(np.hstack((s1,s2)))
             mse = np.mean((dist_predict - idx_len)**2)
@@ -422,6 +445,7 @@ class DistanceMeasure:
         #сразу адаптируем под вектора
         pred = self.model.predict(np.hstack((s1,s2)))
         pred[pred<0] = self.max_distance #так как явная ошибка
+        pred = pred + self.length_penalty_coef*pred**2 #штрафуем за то, что длинные блоки
         return pred
 
 #Cборщик графов. Он берёт n рандомных состояний и рассчитывает расстояние (направленное!) между каждыми двумя. Есть опция “добавить вершину” (с расчётом всех рёбер) и “удалить вершину”. А так же пересчитать рёбра. Текущий state добавляется, целевые state должны быть добавлены изначально.
@@ -434,22 +458,33 @@ class StatesGraph:
         self.edges = set()
         self.nodes = set()
         #Рёбра. Пруним граф: рёбра только таких размеров и используем.
-        self.filtration_min_rel = 0.05
-        self.filtration_max_rel = 0.05
-        self.filtration_min_abs = 10
-        self.filtration_max_abs = 16
+        self.filtration_min_rel = 0.001
+        self.filtration_max_rel = 0.2
+        self.filtration_min_abs = 5
+        self.filtration_max_abs = 60
+        
+        self.count_additional_edges = 20
+        self.part_additional_edges = 0.15
+        
+        #логирование
+        self.time_logging = {'routing':[], 'learning':[], 'acting':[], 'node_adding':[]}
     def fit_dist_measure(self,s,done,epochs=1,verbose=0):
         self.dist_meas.fit(s,done,epochs,verbose)
     #def add_node_list_safety(self,state_list,max_points_abs=500, max_points_part=0.2,filtration_min_rel=0.05,filtration_min_abs=5):
     def add_node_list_safety(self,state_list,max_points_abs=1e2, max_points_part=1):
         #зарядить сюда все вершины. Единственно безопасный вариант!
         #max_points - сколько максимум вершин добавляем из выборки (абсолютное и относительное значение)
+        t_start = pd.Timestamp.now()
         l = len(state_list)
         idx = random.sample(range(l), int(min(int(l*max_points_part),max_points_abs)))
         state_list_sparce = [state_list[i] for i in idx]
         self.add_node_list(state_list_sparce)
+        self.time_logging['node_adding'].append((pd.Timestamp.now()-t_start)/pd.Timedelta(seconds=1))
         
     def add_node_list(self,state_list, edges_drop_part=0.7):
+        if len(state_list)==0:
+            print('add_node_list error: empty state_list')
+            return
         #Опасно! Может повесить комп!
         #filtration_min - минимальное расстояние, относительное и абсолютное
         #ноды должны быть hashable. А значит - ну пусть string
@@ -469,6 +504,17 @@ class StatesGraph:
             if len(whr)>0:
                 break
             print('empty ~idx_drop, retry')
+            if np.random.rand()<0.002:
+                print('empty ~idx_drop, random break',edges_coord_np)
+                break
+        if np.mean(idx_drop)==1:
+            #значит, надо дропнуть всё. Это плохо. Отмена
+            idx_drop = np.random.rand(edges_coord_np.shape[0])<0
+            whr = np.where(~idx_drop)[0]
+        if len(whr)==0:
+            print('old_nodes',old_nodes)
+            print('state_list',state_list)
+                
         print('predicting distances',pd.Timestamp.now())
         #try:
         #    print('state_list', np.array(state_list).shape)
@@ -478,9 +524,20 @@ class StatesGraph:
         #    print('old_nodes', np.array(old_nodes).shape)
         #except Exception:
         #    pass
+        print('edges_coord_np', edges_coord_np[0,0])
         edges_values = self.dist_meas.predict(edges_coord_np[whr,0,:],edges_coord_np[whr,1,:])
         print('edges_values predicted: min max std avg', np.min(edges_values), np.max(edges_values), np.std(edges_values), np.mean(edges_values),'len edges_values', len(edges_values), pd.Timestamp.now())
-        idx = (edges_values>self.filtration_min_abs) &  (edges_values<self.filtration_max_abs) & (edges_values>np.percentile(edges_values,self.filtration_min_rel*100)) & (edges_values<np.percentile(edges_values,100-self.filtration_max_rel*100))
+        #индексы рёбер, которые приходят в целевые точки
+        idx_goal_edges = []
+        if len(edges_coord_np[whr,1,:].shape)==2:
+            edges_coord_np_whr = edges_coord_np[whr,1,:]
+        for state in self.goal_state_list:
+            if len(idx_goal_edges)==0:
+                idx_goal_edges = state==edges_coord_np_whr
+            else:
+                idx_goal_edges = (idx_goal_edges)|(state==edges_coord_np_whr)
+        
+        idx = (edges_values>self.filtration_min_abs) &  (edges_values<self.filtration_max_abs) & (edges_values>np.percentile(edges_values,self.filtration_min_rel*100)) & (edges_values<np.percentile(edges_values,100-self.filtration_max_rel*100))|(idx_goal_edges)
         idx = np.where(idx)[0]
         #print('add2node state_list',state_list)
         for i in idx:
@@ -491,21 +548,39 @@ class StatesGraph:
             self.graph.add_edge(arr_to_str(edges_coord[i][0]),arr_to_str(edges_coord[i][1]),length=edges_values[i][0])
         print('nodes_count', len(self.graph.nodes), 'edges_count', len(self.graph.edges))
     def rewrite_edges(self):
-        #обновить веса рёбер и дропнуть короткие рёбра
+        #провести новые рёбра, обновить веса рёбер и дропнуть короткие рёбра
         #filtration_min - минимальное расстояние, относительное и абсолютное
         nodes = list(self.graph.nodes)
+        if len(nodes)==0:
+            return
         nodes = arr_str_to_array(nodes)
-        edges_coord = itertools.product(nodes, nodes)
+        edges_coord = list(itertools.product(nodes, nodes))
         edges_coord_np = np.array(edges_coord)
         edges_values = self.dist_meas.predict(edges_coord_np[:,0,:],edges_coord_np[:,1,:])
         
-        idx = (edges_values>self.filtration_min_abs) & (edges_values<self.filtration_max_abs) & (edges_values>np.percentile(edges_values,self.filtration_min_rel*100)) & (edges_values<np.percentile(edges_values,100-self.filtration_min_rel*100))
+        #индексы рёбер, которые приходят в целевые точки
+        idx_goal_edges = []
+        for state in self.goal_state_list:
+            if len(idx_goal_edges)==0:
+                idx_goal_edges = state==edges_coord_np[:,1,:]
+            else:
+                idx_goal_edges = (idx_goal_edges)|(state==edges_coord_np[:,1,:])
+        
+        idx = (edges_values>self.filtration_min_abs) &  (edges_values<self.filtration_max_abs) & (edges_values>np.percentile(edges_values,self.filtration_min_rel*100)) & (edges_values<np.percentile(edges_values,100-self.filtration_max_rel*100))|(idx_goal_edges)
         #очистить граф
-        self.graph = nx.DiGraph()
+        self.graph_new = nx.DiGraph()
         for i in np.where(idx)[0]:
-            self.graph.add_node(arr_to_str(edges_coord[i][0]))
-            self.graph.add_node(arr_to_str(edges_coord[i][1]))
-            self.graph.add_edge(arr_to_str(edges_coord[i][0]),arr_to_str(edges_coord[i][1]),length=edges_values[i][0])
+            try:
+                self.graph_new.add_node(arr_to_str(edges_coord_np[i,0,:]))
+                self.graph_new.add_node(arr_to_str(edges_coord_np[i,1,:]))
+                self.graph_new.add_edge(arr_to_str(edges_coord_np[i,0,:]),arr_to_str(edges_coord_np[i,1,:]),length=edges_values[i,:])
+            except Exception as e:
+                print(e)
+                print('edges_coord_np.shape', edges_coord_np.shape)
+                print('edges_values', edges_values.shape)
+                print('error in graph.add_node or graph.add_edge',e,edges_coord_np[i,0,:],edges_coord_np[i,1,:],edges_values[i,:])
+        self.graph = self.graph_new
+        return edges_values
     
     def add_goal_states(self,state_list):
         #добавить целевые состояния
@@ -514,65 +589,83 @@ class StatesGraph:
     
     def add_cur_state(self,state):
         self.cur_state = arr_to_str(state)
-        
-    def make_route(self,s1,s2):
-        s1_num = s1
-        s2_num = s2
-        s1 = arr_to_str(s1)
-        s2 = arr_to_str(s2)
-        if not (s1 in self.graph.nodes):
-            self.add_node_list([s1])
-        if not (s2 in self.graph.nodes):
-            self.add_node_list([s2])
-            
-        try:
-            path = nx.algorithms.shortest_path(self.graph,s1,s2,weight='length')
-        except Exception:
-            #по какой-то непонятной причине у нас эти 2 точки не связаны никак. 
-            #Ок, делаем edge напрямую из одной точки в другую
-            dist = self.dist_meas.predict(np.array(s1_num,ndmin=2),np.array(s2_num,ndmin=2) )
-            dist = dist[0][0]
-            self.graph.add_node(arr_to_str(s1))
-            self.graph.add_node(arr_to_str(s2))
-            self.graph.add_edge(arr_to_str(s1),arr_to_str(s2),
-                                length=dist)
-            path = nx.algorithms.shortest_path(self.graph,s1,s2,weight='length')
-            
-        #есть ещё nx.algorithms.all_shortest_paths - оно будет нужно, если мы захотим как-то фильтровать маршруты
-        return path
     
     def make_route_to_all_states(self,s1,s2_list):
         #посчитать пути ко всем целям
+        t_start_local = pd.Timestamp.now()
         s1_num = s1
         s1 = arr_to_str(np.ravel(np.array(s1)))
-        if not (s1 in self.graph.nodes):
+        nodes = list(self.graph.nodes)
+        if not (s1 in nodes):
             self.add_node_list([s1])
+        nodes = list(self.graph.nodes)    
         path_list = []
         path_length_list = []
         for s2 in s2_list:
             s2_num = s2
             s2 = arr_to_str(s2)
-            if not (s1 in self.graph.nodes):
+            if not (s1 in nodes):
                 self.add_node_list([s1])
-            if not (s2 in self.graph.nodes):
+            if not (s2 in nodes):
                 self.add_node_list([s2])
+            nodes = list(self.graph.nodes)
             #print('s1',s1)
             #print('s1 in graph', np.isin(s1,self.graph.nodes))
             #print('s2',s2)
             #print('s2 in graph', np.isin(s2,self.graph.nodes))
             try:
+                print('s1,s2',s1, s2)
                 path = nx.algorithms.shortest_path(self.graph,s1,s2,weight='length')
             except Exception:
                 #по какой-то непонятной причине у нас эти 2 точки не связаны никак. 
-                #Ок, делаем edge напрямую из одной точки в другую
-                dist = self.dist_meas.predict(np.array(s1_num,ndmin=2),np.array(s2_num,ndmin=2) )
-                dist = dist[0][0]
-                self.graph.add_node(arr_to_str(s1))
-                self.graph.add_node(arr_to_str(s2))
-                self.graph.add_edge(arr_to_str(s1),arr_to_str(s2),
+                print('cannot find path. s1 in graph:', s1 in nodes, 's2 in graph:', s2 in nodes)
+                #if not s2 in nodes:
+                #    print('nodes', nodes)
+                #    print(s2)
+                #выбрать рандомные несколько точек
+                count_additional_edges = np.max([self.count_additional_edges,self.part_additional_edges*len(nodes)])
+                count_additional_edges = int(count_additional_edges)
+                #проложить путь от нас до них и от них до цели
+                print('making new edges to s2, count_additional_edges', count_additional_edges, 'nodes', len(nodes))
+                for i in range(count_additional_edges):
+                    id_node_middle = int(np.random.rand()*(len(nodes) - 1))
+                    node_middle = nodes[id_node_middle]
+                    node_middle = str_to_array(node_middle)
+                    dist = self.dist_meas.predict(np.array(node_middle,ndmin=2),np.array(s2_num,ndmin=2) )
+                    dist = dist[0][0]
+                    self.graph.add_edge(arr_to_str(node_middle),s2,
                                     length=dist)
-                path = nx.algorithms.shortest_path(self.graph,s1,s2,weight='length')
-                
+                    dist = self.dist_meas.predict(np.array(s1_num,ndmin=2),np.array(node_middle,ndmin=2) )
+                    dist = dist[0][0]
+                    self.graph.add_edge(s1,arr_to_str(node_middle),
+                                    length=dist)
+                    #сделали дугу с 1 точкой, сделаем теперь с 2
+                    id_node_middle_2 = int(np.random.rand()*(len(nodes) - 1))
+                    node_middle_2 = nodes[id_node_middle_2]
+                    node_middle_2 = str_to_array(node_middle_2)
+                    dist = self.dist_meas.predict(np.array(node_middle,ndmin=2),np.array(node_middle_2,ndmin=2) )
+                    dist = dist[0][0]
+                    self.graph.add_edge(arr_to_str(node_middle),arr_to_str(node_middle_2),
+                                    length=dist)
+                    dist = self.dist_meas.predict(np.array(node_middle_2,ndmin=2),np.array(s2_num,ndmin=2) )
+                    dist = dist[0][0]
+                    self.graph.add_edge(arr_to_str(node_middle_2),s2,
+                                    length=dist)
+                try:
+                    print('s1,s2',s1, s2)
+                    path = nx.algorithms.shortest_path(self.graph,s1,s2,weight='length')
+                    print('path ready')
+                except Exception as e:
+                    print('cannot!', e)
+                    #Ок, делаем edge напрямую из одной точки в другую
+                    dist = self.dist_meas.predict(np.array(s1_num,ndmin=2),np.array(s2_num,ndmin=2) )
+                    dist = dist[0][0]
+                    self.graph.add_node(s1)
+                    self.graph.add_node(s2)
+                    self.graph.add_edge(s1,s2,
+                                        length=dist)
+                    print('s1,s2',s1, s2)
+                    path = nx.algorithms.shortest_path(self.graph,s1,s2,weight='length')
             
             #здесь можно провести какую-нибудь хитрую проверку 
             #на предмет "а не проходит ли граф через какое-то совсем плохое состояние"
@@ -588,6 +681,7 @@ class StatesGraph:
             #делаем тупой наивный маршрут
             print('cannot find route')
             path = [s1,s2_list[int(np.random.rand()*(len(s2_list)))]]
+        self.time_logging['routing'].append((pd.Timestamp.now()-t_start_local)/pd.Timedelta(seconds=1))
         return path
 
 #сам ИИ
@@ -603,7 +697,7 @@ class GraphAI(StatesGraph):
         self.write_goal = None 
         
         #turn - это про то, как добавлять точки каждый ход. Вероятность и число
-        self.p_add_points_turn=0.01
+        self.p_add_points_turn=0.06
         self.max_points_abs_turn=5
         self.max_points_part_turn=0.01
         #episode - это про то, как добавлять точки каждый ход. Вероятность и число
@@ -643,7 +737,7 @@ class GraphAI(StatesGraph):
         #иногда надо обновлять
         self.frequency_mean_std_update = 0.02
         
-        self.auto_aiming_reward_quantile = 0.99 #1 - значит, мы обрубаем эту фичу
+        self.auto_aiming_reward_quantile = 1 #1 - значит, мы обрубаем эту фичу
         
         #частота, с которой мы проводим ревизию верхнеуровневых goal
         self.drop_goals_by_reward = 0.01
@@ -651,7 +745,10 @@ class GraphAI(StatesGraph):
         
     def get_action(self, state, verbose=0):
         #Использовать rl
+        t_start_local = pd.Timestamp.now()
         goal_changed = False
+        for key in self.time_logging.keys():
+            print(key, np.mean(self.time_logging[key]))
         if 't_start' in globals():
             print('A0',pd.Timestamp.now()-globals()['t_start'])
         globals()['t_start'] = pd.Timestamp.now()
@@ -682,8 +779,15 @@ class GraphAI(StatesGraph):
             if (self.current_goal is None) or ((speed_closing_cos_dist<self.min_window_cos_speed) and (try_time_fact>self.min_try_time)):
                 #обновить цель
                 route = self.make_route_to_all_states(state,self.goal_state_list)
+                self.route_in_graph = route
                 #распарсить из графа
-                lst = str_to_array(route[1])
+                if len(route)>2:
+                    print('route>2',route)
+                try:
+                    lst = str_to_array(route[1])
+                except Exception:
+                    print('error in routing')
+                    lst = str_to_array(route[0])
                 #print('state:',state,'route:',route,'lst:',lst,pd.Timestamp.now())
                 self.current_goal = lst
                 goal_changed = True
@@ -701,12 +805,14 @@ class GraphAI(StatesGraph):
                 std_values = np.std(s_arr,axis=0)
                 std_values[std_values==0] = 1
                 self.mean_std_s = [mean_values,std_values]
-        if np.random.rand()<0.01:
+        if np.random.rand()<0.08:
             #убрать всю очевидную хрень
             try:
+            #if 1:
                 self.rewrite_edges()
-            except Exception:
-                pass
+                print('edges rewrite success')
+            except Exception as e:
+                print('cannot rewrite edges', e)
         #print('FF',pd.Timestamp.now()-globals()['t_start'])
         globals()['t_start'] = pd.Timestamp.now()
         if (len(self.rl.s)>3) and (not (self.current_goal is None)):
@@ -719,6 +825,8 @@ class GraphAI(StatesGraph):
         self.goal_changed.append(goal_changed)
         #print('HH',pd.Timestamp.now()-globals()['t_start'])
         globals()['t_start'] = pd.Timestamp.now()
+        
+        self.time_logging['acting'].append((pd.Timestamp.now()-t_start_local)/pd.Timedelta(seconds=1))
         
         return action
             
@@ -746,6 +854,7 @@ class GraphAI(StatesGraph):
         
         
     def train_model(self,epochs=2,sub_batch_size=6000,verbose=0,p_default=0.1):
+        t_start_local = pd.Timestamp.now()
         if len(self.rl.s) < self.rl.train_start:
             return
         #p_default - это вероятность запуска обучения. Мы не хотим каждый кадр
@@ -798,6 +907,7 @@ class GraphAI(StatesGraph):
         #обучить rl
         #print('graph train start',pd.Timestamp.now())
         self.rl.train_model(epochs,sub_batch_size,verbose)
+        self.time_logging['learning'].append((pd.Timestamp.now()-t_start_local)/pd.Timedelta(seconds=1))
         
     def update_target_model(self):
         if len(self.rl.s) < self.rl.train_start:
@@ -815,7 +925,7 @@ class GraphAI(StatesGraph):
         self.train_model(epochs=30,sub_batch_size=6000,verbose=0)
         self.train_model(epochs=1,sub_batch_size=6000,verbose=1)
         
-    def debug_info(self, frames=200,pairs_count=200):
+    def debug_info(self, frames=200,pairs_count=200, graph_layout='xy', show_full_graph=True):
         #SSR SSAR
         s = np.array(self.rl.s)
         s_g = np.array(self.rl.s_g)
@@ -858,4 +968,49 @@ class GraphAI(StatesGraph):
         plt.plot(idx_len)
         plt.plot(dist_predict)
         plt.show()
+        
+        #отрисовать граф
+        if graph_layout=='xy':
+            #self.graph.edges -> coords
+            #edges = agent.graph.edges(data=True)
+            #for edge in edges:
+            #    node0 = edge[0]
+            #    node1 = edge[1]
+            #    node0 = str_to_array(node0)
+            #    node1 = str_to_array(node1)
+            #    len_edge = edge[2]['length']
+            if show_full_graph:
+                print('FULL GRAPH')
+                nodes = list(self.graph.nodes)
+                layout = {}
+                for node in nodes:
+                    node_ar = str_to_array(node)
+                    layout[node] = node_ar[1:]
+                nx.draw_networkx(self.graph,pos=layout,node_size=50,with_labels=False)
+
+            layout = {}
+            nodes = list(self.graph.nodes)
+            edges = []
+            for i in range(len(self.route_in_graph) - 1):
+                edges.append((self.route_in_graph[i],self.route_in_graph[i + 1]))
+            #
+            path = self.graph.edge_subgraph(edges)
+            #for node in nodes:
+            #    path.add_node(node)
+            #for edge in edges:
+            #    self.graph.edge
+            #    path.add_edge(edge[0], edge[1], length=)
+            
+                
+            print('PATH',list(path.edges(data=True)))
+            for node in nodes:
+                node_ar = str_to_array(node)
+                layout[node] = node_ar[1:]
+            nx.draw_networkx(path,pos=layout,node_size=50,with_labels=True,node_color='red',edge_color='red')
+            plt.show()
+            for node in nodes:
+                node_ar = str_to_array(node)
+                layout[node] = node_ar[1:]
+            nx.draw_networkx(path,pos=layout,node_size=50,with_labels=True,node_color='red',edge_color='red')
+            plt.show()
         

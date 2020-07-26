@@ -15,16 +15,11 @@ class jet_table_simple_env(gym.Env):
     Source:
         
     Observation: 
-        Type: Box(8)
+        Type: Box(3)
         Num	Observation                 
         0	tm                            
         1	tx_rel     
-        2	ty_rel   
-        3	left_r
-        4	right_r
-        5	up_r
-        6	down_r
-        7	reward   
+        2	ty_rel     
     Actions:
         Type: Discrete(4)
         Num	Action
@@ -49,11 +44,6 @@ class jet_table_simple_env(gym.Env):
         high = np.array([
             300,
             5,
-            5,
-            1,
-            2,
-            2,
-            2,
             5
         ])
         
@@ -74,12 +64,12 @@ class jet_table_simple_env(gym.Env):
         self.make_map()
         
     def make_map(self):
-        self.seed(1)
+        self.seed(4)
         self.table = {'x':16.,'y':16.,'vx':0.,'vy':0.}
         self.target = {'x':2.,'y':2.}
         self.obstacle_map = np.ones((21,21))
         self.obstacle_map[1:self.obstacle_map.shape[0]-1,1:self.obstacle_map.shape[1]-1]=0
-        for i in range(5):
+        for i in range(10):
             orientation = np.random.rand()<0.5
             start = int(np.random.rand()*(self.obstacle_map.shape[0]-2))#1я координата
             length = int(np.random.rand()*(self.obstacle_map.shape[0]-2)*0.6)
@@ -165,12 +155,7 @@ class jet_table_simple_env(gym.Env):
         self.t += 1  
         self.state = (self.t,
                       self.table['x'] - self.target['x'],
-                      self.table['y'] - self.target['y'],
-                      radar['left'],
-                      radar['right'],
-                      radar['up'],
-                      radar['down'],
-                      self.reward)
+                      self.table['y'] - self.target['y'])
         ############
         done = bool(self.t>=350)
         if not done:
@@ -192,7 +177,7 @@ class jet_table_simple_env(gym.Env):
             del self.viewer
             self.viewer = None
             
-        self.state = np.random.uniform(low=-0.5, high=0.5, size=(8,))
+        self.state = np.random.uniform(low=-0.5, high=0.5, size=(3,))
         self.steps_beyond_done = None
         ########
 
