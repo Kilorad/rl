@@ -143,13 +143,18 @@ class GoalAgent:
                 #r_predict_array.append(self.model_ssar.predict(ssa_current)[0][0])
                 ssa_current_array.append(ssa_current)
             r_predict_array = self.model_ssar.predict(np.array(ssa_current_array)[:, 0, :])
+            random_ampl = np.std(r_predict_array)*0.2
+            d_r_random = np.random.rand(len(r_predict_array))*random_ampl
+            r_predict_array_augmented = np.ravel(r_predict_array) + d_r_random
+            print(d_r_random)
             if verbose:
-                print('r_predict_array',r_predict_array)
+                print('r_predict_array_augmented',r_predict_array_augmented)
                 
             action_names = ['vx++','vx--','vy++','vy--']
-            print(f'go from {np.ravel(state)[1:3]} to {np.ravel(state_goal)[1:3]}, action {action_names[np.argmax(r_predict_array)]}')
+            print(r_predict_array_augmented)
+            print(f'go from {np.ravel(state)[1:3]} to {np.ravel(state_goal)[1:3]}, action {action_names[np.argmax(r_predict_array_augmented)]},    dq_cur={np.max(r_predict_array_augmented)}, dq={r_predict_array_augmented},  random_ampl {random_ampl}')
             
-            return np.argmax(r_predict_array)
+            return np.argmax(r_predict_array_augmented)
 
     # save sample <s,s_g,a,r,s'> to the replay memory
     def append_sample(self, state, state_goal, action, reward, next_state, done):
@@ -270,7 +275,7 @@ class GoalAgent:
         return (s,s_g,action,reward)
     
     def update_target_model(self):
-        self.train_model(epochs=30,sub_batch_size=6000,verbose=0)
+        self.train_model(epochs=120,sub_batch_size=6000,verbose=0)
         self.train_model(epochs=1,sub_batch_size=6000,verbose=1)
         
     def test_model(self,model,X,Y,show_result=False):
@@ -460,7 +465,7 @@ class StatesGraph:
         self.nodes = set()
         #Рёбра. Пруним граф: рёбра только таких размеров и используем.
         self.filtration_min_rel = 0.001
-        self.filtration_max_rel = 0.7
+        self.filtration_max_rel = 0.4
         self.filtration_min_abs = 5
         self.filtration_max_abs = 60
         
@@ -698,12 +703,12 @@ class GraphAI(StatesGraph):
         
         #turn - это про то, как добавлять точки каждый ход. Вероятность и число
         self.p_add_points_turn=0.06
-        self.max_points_abs_turn=5
+        self.max_points_abs_turn=2
         self.max_points_part_turn=0.01
         #episode - это про то, как добавлять точки каждый ход. Вероятность и число
         self.p_add_points_episode=1
         self.max_points_abs_episode=20
-        self.max_points_part_episode=0.2
+        self.max_points_part_episode=0.03
 
         
         #окно измерения скорости сближения
@@ -990,11 +995,11 @@ class GraphAI(StatesGraph):
 
             layout = {}
             nodes = list(self.graph.nodes)
-            edges = []
+            edges_path = []
             for i in range(len(self.route_in_graph) - 1):
-                edges.append((self.route_in_graph[i],self.route_in_graph[i + 1]))
+                edges_path.append((self.route_in_graph[i],self.route_in_graph[i + 1]))
             #
-            path = self.graph.edge_subgraph(edges)
+            path = self.graph.edge_subgraph(edges_path)
             #for node in nodes:
             #    path.add_node(node)
             #for edge in edges:
@@ -1013,4 +1018,9 @@ class GraphAI(StatesGraph):
                 layout[node] = node_ar[1:]
             nx.draw_networkx(path,pos=layout,node_size=50,with_labels=True,node_color='red',edge_color='red')
             plt.show()
+            
+            print('nodes', len(nodes))
+            print('edges', len(list(self.graph.edges)))
+            edge_lens = [list(self.graph.edges.data())[i][2]['length'] for i in range(len(list(self.graph.edges)))]
+            plt.hist(edge_lens,bins=50)
         
