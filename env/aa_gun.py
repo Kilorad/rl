@@ -373,11 +373,11 @@ class AA_gun_simple0_env(gym.Env):
         
         return np.array(self.state)
 
-    def render(self, mode='human'):
+    def render(self, mode='human',screen_width=600,screen_height=400):
         from gym.envs.classic_control import rendering
         
-        screen_width = 600
-        screen_height = 400
+        #screen_width = 600
+        #screen_height = 400
 
         world_width = 400*2
         scale = screen_width/world_width

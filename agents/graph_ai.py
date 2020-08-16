@@ -71,7 +71,7 @@ class GoalAgent:
         self.action_size = action_size
 
         # hyper parameters for the Double SARSA
-        self.discount_factor = 0.98 #0.98**15 ~ 0.75
+        self.discount_factor = 0.9 #0.98**15 ~ 0.75
         self.learning_rate = 0.0001
         self.epsilon = 0.6
         self.epsilon_decay = 0.996
@@ -189,6 +189,7 @@ class GoalAgent:
         idx_goal_changed = np.any((s_g_arr - np.roll(s_g_arr,1, axis=0))!=0,axis=1) 
         #цель сменилась. Типа такого: 00001111, и мы выбираем первую единичку
         idx_borders = idx_borders | idx_goal_changed
+        self.idx_borders = idx_borders
         self.r_disco = utils.exp_smooth(self.r,self.discount_factor,self.planning_horison,idx_borders)
         #print('self.r_disco', self.r_disco)
         #print('self.r', self.r)
@@ -286,7 +287,7 @@ class GoalAgent:
         if sub_batch_size is None:
             sub_batch_size = self.sub_batch_size
         #награды - это дистанции до цели
-        self.make_discounted_rewards()
+        self.make_discounted_rewards(False)
         batch_size = max(self.batch_size,sub_batch_size)
         batch_size = min(batch_size, len(self.s))
         #batch_size - это или self.batch_size, или кастомный sub_batch_size, если он больше, или длина дека, когда она меньше
@@ -377,7 +378,7 @@ class DistanceMeasure:
         #400 + k*400^2 = 400 + k*160000
         #чтобы 3 по 200 перевесило 1 по 400, надо, чтобы 400 + k*160000 = 3*(200 + k*40000), 
         #то есть k=0.005
-        self.length_penalty_coef = 0.5
+        self.length_penalty_coef = 0.6
         
         #моделька. Посчитать время между двумя точками.
         input_dim = 2*self.state_size
@@ -459,12 +460,12 @@ class StatesGraph:
         self.nodes = set()
         #Рёбра. Пруним граф: рёбра только таких размеров и используем.
         self.filtration_min_rel = 0.001
-        self.filtration_max_rel = 0.2
+        self.filtration_max_rel = 0.7
         self.filtration_min_abs = 5
         self.filtration_max_abs = 60
         
         self.count_additional_edges = 20
-        self.part_additional_edges = 0.15
+        self.part_additional_edges = 0.06
         
         #логирование
         self.time_logging = {'routing':[], 'learning':[], 'acting':[], 'node_adding':[]}
@@ -524,7 +525,6 @@ class StatesGraph:
         #    print('old_nodes', np.array(old_nodes).shape)
         #except Exception:
         #    pass
-        print('edges_coord_np', edges_coord_np[0,0])
         edges_values = self.dist_meas.predict(edges_coord_np[whr,0,:],edges_coord_np[whr,1,:])
         print('edges_values predicted: min max std avg', np.min(edges_values), np.max(edges_values), np.std(edges_values), np.mean(edges_values),'len edges_values', len(edges_values), pd.Timestamp.now())
         #индексы рёбер, которые приходят в целевые точки
