@@ -5,10 +5,10 @@ import random
 import numpy as np
 from collections import deque
 import keras
-from keras.layers import Dense, Dropout
-from keras.optimizers import Adam
-from keras.models import Sequential
-from keras.layers.normalization import BatchNormalization
+from tensorflow.keras.layers import Dense, Dropout
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import BatchNormalization
 import matplotlib.pyplot as plt
 sys.path.append('./common/')
 import utils
@@ -16,7 +16,7 @@ import utils
 
 # double SARSA agent (sr+sar)
 class SarsaAgent:
-    def __init__(self, state_size, action_size, layers_size=[100,100]):
+    def __init__(self, state_size, action_size, layers_size=[100,100], maxlen=10000):
         self.render = False
         self.load_model = False
         # get size of state and action
@@ -36,7 +36,7 @@ class SarsaAgent:
         self.planning_horison = 810
         self.layers_size = layers_size
         # create replay memory using deque
-        self.memory = deque(maxlen=10000)
+        self.memory = deque(maxlen=maxlen)
 
         # create main model and target model
         self.model_sr = self.build_model('sr')
@@ -168,8 +168,8 @@ class SarsaAgent:
                 break
         return (s,action,reward)
     def update_target_model(self):
-        self.train_model(epochs=30,sub_batch_size=6000,verbose=0)
-        self.train_model(epochs=1,sub_batch_size=6000,verbose=1)
+        self.train_model(epochs=10,sub_batch_size=6000,verbose=0)
+        self.train_model(epochs=1,sub_batch_size=6000,verbose=0)
     def test_model(self,model,X,Y):
         mse = np.mean((model.predict(X)-Y)**2)
         return mse
@@ -203,7 +203,7 @@ class SarsaAgent:
         if len(self.memory) < self.train_start*1.05:
             verbose = True
             epochs*=2
-        for i in range(10):
+        for i in range(4):
             self.model_sr.fit(s, r, batch_size=self.batch_size,
                            epochs=epochs, verbose=verbose)
             mse = self.test_model(self.model_sr,s,r)
@@ -217,7 +217,7 @@ class SarsaAgent:
         #Предсказать дельту
         delta_r = r-r_sr_predicted
         
-        for i in range(10):
+        for i in range(4):
             self.model_sar.fit(np.hstack((s,a)), delta_r, batch_size=self.batch_size,
                            epochs=epochs, verbose=verbose)
             mse = self.test_model(self.model_sar,np.hstack((s,a)),delta_r)
